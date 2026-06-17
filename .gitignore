@@ -1,0 +1,7 @@
+node_modules/
+client/node_modules/
+.idea/
+dist/
+client/dist/
+.env
+*.local
