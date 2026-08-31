@@ -102,3 +102,29 @@ describe("sortOffers", () => {
     expect(sorted[0]?.score).toBeGreaterThanOrEqual(sorted[1]?.score ?? 0);
   });
 });
+
+describe("custom ranking weights", () => {
+  it("a price-only weighting ranks strictly by price", () => {
+    const cheapSlow = make("cheap", 500, 2400, 2);
+    const dearFast = make("fast", 560, 700, 0);
+    scoreOffers([cheapSlow, dearFast], { price: 1, duration: 0, stops: 0 });
+
+    expect(cheapSlow.score).toBeGreaterThan(dearFast.score ?? 0);
+  });
+
+  it("a duration-only weighting ranks strictly by time", () => {
+    const cheapSlow = make("cheap", 500, 2400, 2);
+    const dearFast = make("fast", 560, 700, 0);
+    scoreOffers([cheapSlow, dearFast], { price: 0, duration: 1, stops: 0 });
+
+    expect(dearFast.score).toBeGreaterThan(cheapSlow.score ?? 0);
+  });
+
+  it("a heavy stop penalty demotes connections", () => {
+    const direct = make("direct", 600, 800, 0);
+    const twoStop = make("two", 590, 800, 2);
+    scoreOffers([direct, twoStop], { price: 0.6, duration: 0.4, stops: 0.4 });
+
+    expect(direct.score).toBeGreaterThan(twoStop.score ?? 0);
+  });
+});

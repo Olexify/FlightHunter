@@ -25,7 +25,10 @@ function signature(offer: FlightOffer): string {
     return `${it.direction}:${it.departureAt}>${it.arrivalAt}:${it.stops}`;
   });
 
-  return `${offer.origin}-${offer.destination}|${legs.join("||")}`;
+  // Fare brand is part of the identity: Basic and Flex on the SAME flight are
+  // two genuinely different products at different prices, and collapsing them
+  // would throw away most of a route's real price spread.
+  return `${offer.origin}-${offer.destination}|${legs.join("||")}|${offer.fareBrand ?? "-"}`;
 }
 
 /**

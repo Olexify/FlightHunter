@@ -70,6 +70,18 @@ const MIGRATIONS: Array<{ name: string; sql: string }> = [
       CREATE INDEX idx_alert_events_alert ON alert_events (alert_id, created_at DESC);
     `,
   },
+  {
+    name: "003_custom_presets",
+    sql: `
+      CREATE TABLE custom_presets (
+        id           TEXT PRIMARY KEY,
+        name         TEXT NOT NULL,
+        origins      TEXT NOT NULL,
+        destinations TEXT NOT NULL,
+        created_at   TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 function migrate(db: Db): void {

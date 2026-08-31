@@ -79,3 +79,24 @@ describe("dedupeOffers", () => {
     expect(dedupeOffers([a, b])).toHaveLength(1);
   });
 });
+
+describe("fare families", () => {
+  it("keeps different fare brands of the same flight as separate rows", () => {
+    // Collapsing these would throw away most of a route's real price spread —
+    // Basic and Flex are genuinely different products.
+    const basic = offer({ id: "b", fareBrand: "BASIC", price: { total: 500, currency: "EUR" } });
+    const flex = offer({ id: "f", fareBrand: "FLEX", price: { total: 790, currency: "EUR" } });
+
+    const result = dedupeOffers([basic, flex]);
+    expect(result).toHaveLength(2);
+  });
+
+  it("still collapses the SAME brand quoted twice", () => {
+    const a = offer({ id: "a", fareBrand: "BASIC", price: { total: 520, currency: "EUR" } });
+    const b = offer({ id: "b", fareBrand: "BASIC", price: { total: 540, currency: "EUR" } });
+
+    const result = dedupeOffers([a, b]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.price.total).toBe(520);
+  });
+});

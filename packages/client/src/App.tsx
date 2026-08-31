@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Alert, PricePoint, SavedSearch } from "@flighthunter/shared";
+import type { Alert, CustomPreset, PricePoint, SavedSearch } from "@flighthunter/shared";
 import { formatPrice } from "@flighthunter/shared";
 import { api, type AlertEvent, type Meta } from "./api";
 import { useSearch } from "./hooks/useSearch";
 import { useTheme } from "./hooks/useTheme";
+import { useSettings } from "./hooks/useSettings";
 import {
   defaultForm,
   formFromSearchParams,
@@ -17,13 +18,17 @@ import PriceGrid from "./components/PriceGrid";
 import PriceHistoryChart from "./components/PriceHistoryChart";
 import AlertsPanel from "./components/AlertsPanel";
 import SavedSearches from "./components/SavedSearches";
+import SettingsPanel from "./components/SettingsPanel";
 import ProviderBar from "./components/ProviderBar";
 
-type Tab = "alerts" | "saved" | "history";
+type Tab = "alerts" | "saved" | "history" | "settings";
 
 export default function App() {
+  const { settings, update, updateWeights, reset } = useSettings();
+
   const [form, setForm] = useState<FormState>(() => formFromSearchParams(window.location.search));
   const [meta, setMeta] = useState<Meta | null>(null);
+  const [customPresets, setCustomPresets] = useState<CustomPreset[]>([]);
   const [tab, setTab] = useState<Tab>("alerts");
   const [pinned, setPinned] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -34,7 +39,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
 
   const { state, run, cancel } = useSearch();
-  const { theme, cycle } = useTheme();
+  const { theme, setTheme, cycle } = useTheme();
 
   const patch = useCallback((p: Partial<FormState>) => setForm((f) => ({ ...f, ...p })), []);
 
@@ -49,16 +54,27 @@ export default function App() {
     api.meta().then(setMeta).catch(() => notify("Could not reach the API"));
     void refreshAlerts();
     void refreshSaved();
+    void refreshPresets();
     // Intentionally run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Back/forward should restore the search that link encodes. */
   useEffect(() => {
-    const onPop = (): void => setForm(formFromSearchParams(window.location.search));
+    const onPop = (): void => setForm(formFromSearchParams(window.location.search, settings));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [settings]);
+
+  /**
+   * Result volume is a preference, but the live form carries its own copy so a
+   * single search can be widened without changing the default. Push the
+   * setting through, otherwise moving the slider appears to do nothing until
+   * the next fresh form.
+   */
+  useEffect(() => {
+    setForm((f) => (f.maxPerPair === settings.maxPerPair ? f : { ...f, maxPerPair: settings.maxPerPair }));
+  }, [settings.maxPerPair]);
 
   async function refreshAlerts(): Promise<void> {
     try {
@@ -78,6 +94,14 @@ export default function App() {
     }
   }
 
+  async function refreshPresets(): Promise<void> {
+    try {
+      setCustomPresets((await api.presets()).custom);
+    } catch {
+      /* built-in presets still work */
+    }
+  }
+
   /* -------------------------------- search -------------------------------- */
 
   const submit = useCallback(
@@ -86,15 +110,15 @@ export default function App() {
       if (override) setForm(next);
 
       // Mirror the search into the URL so it can be bookmarked and shared.
-      const qs = formToSearchParams(next);
+      const qs = formToSearchParams(next, settings);
       window.history.pushState({}, "", `${window.location.pathname}?${qs}`);
 
-      void run(formToRequest(next));
+      void run(formToRequest(next, settings.weights));
     },
-    [form, run],
+    [form, run, settings],
   );
 
-  /* Keyboard: Enter anywhere outside a field runs the search. */
+  /* Keyboard shortcuts. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement | null;
@@ -145,11 +169,26 @@ export default function App() {
     const name = window.prompt("Name this search", `${form.origins[0] ?? "?"} → ${form.destinations[0] ?? "?"}`);
     if (!name) return;
     try {
-      await api.savedCreate(name, formToRequest(form));
+      await api.savedCreate(name, formToRequest(form, settings.weights));
       await refreshSaved();
       notify("Search saved");
     } catch {
       notify("Could not save the search");
+    }
+  };
+
+  const savePreset = async (): Promise<void> => {
+    const name = window.prompt(
+      "Name this route preset",
+      `${form.origins.slice(0, 2).join("/")} → ${form.destinations.slice(0, 2).join("/")}`,
+    );
+    if (!name) return;
+    try {
+      await api.presetCreate(name, form.origins, form.destinations);
+      await refreshPresets();
+      notify("Preset saved");
+    } catch {
+      notify("Could not save the preset");
     }
   };
 
@@ -160,7 +199,7 @@ export default function App() {
   }): Promise<void> => {
     setBusy(true);
     try {
-      await api.alertCreate({ ...input, request: formToRequest(form) });
+      await api.alertCreate({ ...input, request: formToRequest(form, settings.weights) });
       await refreshAlerts();
       notify("Alert created");
     } catch {
@@ -192,6 +231,33 @@ export default function App() {
     }
   };
 
+  /** Clear every advanced filter without disturbing the route or dates. */
+  const resetFilters = (): void => {
+    const blank = defaultForm(settings);
+    patch({
+      includeAirlines: [],
+      excludeAirlines: [],
+      alliances: [],
+      fareBrands: [],
+      requireCheckedBag: false,
+      excludeLowCost: false,
+      viaAirports: [],
+      avoidAirports: [],
+      maxSegments: null,
+      avoidRedEye: false,
+      departAfter: "",
+      departBefore: "",
+      arriveAfter: "",
+      arriveBefore: "",
+      minLayoverMinutes: null,
+      maxLayoverMinutes: null,
+      maxDurationHours: null,
+      maxPrice: null,
+      nearbyRadiusKm: 0,
+      maxPerPair: blank.maxPerPair,
+    });
+  };
+
   const pinnedOffers = offers.filter((o) => pinned.includes(o.id));
   const routeCount = form.origins.length * form.destinations.length;
 
@@ -221,6 +287,9 @@ export default function App() {
           <button type="button" className="btn-ghost" onClick={exportCsv} disabled={offers.length === 0}>
             Export CSV
           </button>
+          <button type="button" className="btn-ghost" onClick={() => setTab("settings")} title="Settings">
+            ⚙
+          </button>
           <button type="button" className="btn-ghost" onClick={cycle} title={`Theme: ${theme}`}>
             {theme === "dark" ? "🌙" : theme === "light" ? "☀️" : "🖥"}
           </button>
@@ -242,8 +311,15 @@ export default function App() {
             onSubmit={() => submit()}
             onCancel={cancel}
             onSave={saveSearch}
+            onResetFilters={resetFilters}
             loading={state.status === "loading"}
             presets={meta?.presets ?? []}
+            customPresets={customPresets}
+            onSavePreset={savePreset}
+            onDeletePreset={async (id) => {
+              await api.presetRemove(id);
+              await refreshPresets();
+            }}
             currencies={meta?.currencies ?? ["EUR", "USD", "GBP"]}
             routeCount={routeCount}
           />
@@ -291,6 +367,7 @@ export default function App() {
             offers={offers}
             pinned={pinned}
             loading={state.status === "loading"}
+            settings={settings}
             onTogglePin={(id) =>
               setPinned((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
             }
@@ -299,7 +376,7 @@ export default function App() {
 
         <aside className="col-panel">
           <div className="tabs" role="tablist">
-            {(["alerts", "saved", "history"] as Tab[]).map((t) => (
+            {(["alerts", "saved", "history", "settings"] as Tab[]).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -308,7 +385,13 @@ export default function App() {
                 className={tab === t ? "tab active" : "tab"}
                 onClick={() => setTab(t)}
               >
-                {t === "alerts" ? "Alerts" : t === "saved" ? "Saved" : "History"}
+                {t === "alerts"
+                  ? "Alerts"
+                  : t === "saved"
+                    ? "Saved"
+                    : t === "history"
+                      ? "History"
+                      : "Settings"}
               </button>
             ))}
           </div>
@@ -355,6 +438,18 @@ export default function App() {
                 route={`${form.origins[0] ?? "?"} → ${form.destinations[0] ?? "?"}`}
               />
             </div>
+          )}
+
+          {tab === "settings" && (
+            <SettingsPanel
+              settings={settings}
+              onChange={update}
+              onWeights={updateWeights}
+              onReset={reset}
+              currencies={meta?.currencies ?? ["EUR", "USD", "GBP"]}
+              theme={theme}
+              onTheme={setTheme}
+            />
           )}
         </aside>
       </main>

@@ -7,9 +7,7 @@ import { minutesIntoDay } from "@flighthunter/shared";
  * trip. Each dimension is normalised across the result set, then weighted.
  */
 
-const WEIGHTS = { price: 0.6, duration: 0.4 } as const;
-/** Each connection is treated as roughly an 8% penalty on the trip. */
-const STOP_PENALTY = 0.08;
+import { DEFAULT_RANKING_WEIGHTS, type RankingWeights } from "@flighthunter/shared";
 
 /**
  * Penalty is measured as *proportional excess over the best in the set*, not
@@ -26,8 +24,15 @@ function excess(value: number, best: number): number {
   return Math.max(0, value / best - 1);
 }
 
-/** Attaches a 0-100 score to every offer (higher = better) and returns them. */
-export function scoreOffers(offers: FlightOffer[]): FlightOffer[] {
+/**
+ * Attaches a 0-100 score to every offer (higher = better) and returns them.
+ * Weights are user-tunable from Settings, so someone who cares only about
+ * price can bias the ranking without abandoning "best value" entirely.
+ */
+export function scoreOffers(
+  offers: FlightOffer[],
+  weights: RankingWeights = DEFAULT_RANKING_WEIGHTS,
+): FlightOffer[] {
   if (offers.length === 0) return offers;
 
   let bestPrice = Infinity;
@@ -42,9 +47,9 @@ export function scoreOffers(offers: FlightOffer[]): FlightOffer[] {
 
   for (const o of offers) {
     const penalty =
-      WEIGHTS.price * excess(o.price.total, bestPrice) +
-      WEIGHTS.duration * excess(o.totalDurationMinutes, bestDuration) +
-      STOP_PENALTY * o.maxStops;
+      weights.price * excess(o.price.total, bestPrice) +
+      weights.duration * excess(o.totalDurationMinutes, bestDuration) +
+      weights.stops * o.maxStops;
 
     // A penalty of 1.0 or more bottoms out at zero rather than going negative.
     o.score = Math.round(Math.max(0, 1 - penalty) * 1000) / 10;

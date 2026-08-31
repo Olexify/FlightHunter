@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { Alert, FlightOffer, PricePoint, SavedSearch, SearchRequest } from "@flighthunter/shared";
+import type {
+  Alert,
+  CustomPreset,
+  FlightOffer,
+  PricePoint,
+  SavedSearch,
+  SearchRequest,
+} from "@flighthunter/shared";
 import { getDb } from "./index.js";
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +167,51 @@ export const savedSearches = {
 
   remove(id: string): boolean {
     return getDb().prepare("DELETE FROM saved_searches WHERE id = ?").run(id).changes > 0;
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* Custom presets                                                      */
+/* ------------------------------------------------------------------ */
+
+interface PresetRow {
+  id: string;
+  name: string;
+  origins: string;
+  destinations: string;
+  created_at: string;
+}
+
+const toPreset = (r: PresetRow): CustomPreset => ({
+  id: r.id,
+  name: r.name,
+  // Stored as comma-joined IATA codes; filter guards against a stray empty.
+  origins: r.origins.split(",").filter(Boolean),
+  destinations: r.destinations.split(",").filter(Boolean),
+  createdAt: r.created_at,
+});
+
+export const customPresets = {
+  list(): CustomPreset[] {
+    return getDb()
+      .prepare<[], PresetRow>("SELECT * FROM custom_presets ORDER BY created_at DESC")
+      .all()
+      .map(toPreset);
+  },
+
+  create(name: string, origins: string[], destinations: string[]): CustomPreset {
+    const id = randomUUID();
+    const createdAt = new Date().toISOString();
+    getDb()
+      .prepare(
+        "INSERT INTO custom_presets (id, name, origins, destinations, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(id, name, origins.join(","), destinations.join(","), createdAt);
+    return { id, name, origins, destinations, createdAt };
+  },
+
+  remove(id: string): boolean {
+    return getDb().prepare("DELETE FROM custom_presets WHERE id = ?").run(id).changes > 0;
   },
 };
 

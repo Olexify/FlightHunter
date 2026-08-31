@@ -1,17 +1,33 @@
-import type { Airline, FlightOffer, Itinerary, Segment, SearchRequest } from "@flighthunter/shared";
-import { addDays, daysBetween, haversineKm, estimateFlightMinutes } from "@flighthunter/shared";
-import { getAirport, distanceBetween } from "../data/airports.js";
+import type {
+  Airline,
+  Baggage,
+  FareBrand,
+  FlightOffer,
+  Itinerary,
+  Segment,
+  SearchRequest,
+} from "@flighthunter/shared";
+import {
+  addDays,
+  airlineName,
+  daysBetween,
+  estimateCo2Kg,
+  estimateFlightMinutes,
+  haversineKm,
+  isLowCost,
+} from "@flighthunter/shared";
+import { distanceBetween, getAirport } from "../data/airports.js";
 import { wallClockInZone, zonedWallClockToEpoch } from "../util/time.js";
 import type { FlightProvider, ProviderContext, RoutePair } from "./types.js";
 
 /**
  * Offline provider used when no API keys are present.
  *
- * It is deterministic: the same route and date always produce the same fares,
- * so the UI, the price grid and the saved-price history stay coherent across
- * reloads. Prices are modelled on real drivers — great-circle distance, cabin,
- * connection count and how far out the departure is — so the app is genuinely
- * usable (and demo-able) before anyone signs up for an API key.
+ * Deterministic: the same route and date always produce the same fares, so the
+ * UI, the price grid and the saved price history stay coherent across reloads.
+ * Prices model real drivers — distance, cabin, connections, how far out the
+ * departure is, and the fare family — so the app is genuinely usable before
+ * anyone signs up for an API key.
  */
 
 /* ------------------------------ deterministic RNG ------------------------------ */
@@ -42,28 +58,67 @@ const pick = <T>(rand: () => number, items: readonly T[]): T =>
 
 /* --------------------------------- carriers --------------------------------- */
 
-const CARRIERS: ReadonlyArray<Airline & { hub: string; premium: number }> = [
-  { code: "TK", name: "Turkish Airlines", hub: "IST", premium: 1.0 },
-  { code: "QR", name: "Qatar Airways", hub: "DOH", premium: 1.15 },
-  { code: "EK", name: "Emirates", hub: "DXB", premium: 1.18 },
-  { code: "EY", name: "Etihad Airways", hub: "AUH", premium: 1.1 },
-  { code: "AY", name: "Finnair", hub: "HEL", premium: 1.08 },
-  { code: "LH", name: "Lufthansa", hub: "FRA", premium: 1.2 },
-  { code: "KL", name: "KLM", hub: "AMS", premium: 1.14 },
-  { code: "AF", name: "Air France", hub: "CDG", premium: 1.16 },
-  { code: "LO", name: "LOT Polish Airlines", hub: "WAW", premium: 0.95 },
-  { code: "OS", name: "Austrian Airlines", hub: "VIE", premium: 1.12 },
-  { code: "SU", name: "Aeroflot", hub: "SVO", premium: 0.85 },
-  { code: "CA", name: "Air China", hub: "PEK", premium: 0.88 },
-  { code: "CZ", name: "China Southern", hub: "CAN", premium: 0.84 },
-  { code: "KE", name: "Korean Air", hub: "ICN", premium: 1.05 },
-  { code: "SQ", name: "Singapore Airlines", hub: "SIN", premium: 1.22 },
-  { code: "BA", name: "British Airways", hub: "LHR", premium: 1.17 },
-  { code: "JL", name: "Japan Airlines", hub: "HND", premium: 1.19 },
-  { code: "NH", name: "ANA", hub: "HND", premium: 1.19 },
+/** Codes resolve to real names and alliances via the shared airline table. */
+interface MockCarrier {
+  code: string;
+  hub: string;
+  /** Fare multiplier reflecting the carrier's market position. */
+  premium: number;
+}
+
+const CARRIERS: readonly MockCarrier[] = [
+  { code: "TK", hub: "IST", premium: 1.0 },
+  { code: "QR", hub: "DOH", premium: 1.15 },
+  { code: "EK", hub: "DXB", premium: 1.18 },
+  { code: "EY", hub: "AUH", premium: 1.1 },
+  { code: "AY", hub: "HEL", premium: 1.08 },
+  { code: "LH", hub: "FRA", premium: 1.2 },
+  { code: "LX", hub: "ZRH", premium: 1.21 },
+  { code: "KL", hub: "AMS", premium: 1.14 },
+  { code: "AF", hub: "CDG", premium: 1.16 },
+  { code: "LO", hub: "WAW", premium: 0.95 },
+  { code: "OS", hub: "VIE", premium: 1.12 },
+  { code: "SU", hub: "SVO", premium: 0.85 },
+  { code: "CA", hub: "PEK", premium: 0.88 },
+  { code: "CZ", hub: "CAN", premium: 0.84 },
+  { code: "MU", hub: "PVG", premium: 0.83 },
+  { code: "KE", hub: "ICN", premium: 1.05 },
+  { code: "OZ", hub: "ICN", premium: 1.02 },
+  { code: "SQ", hub: "SIN", premium: 1.22 },
+  { code: "TG", hub: "BKK", premium: 1.03 },
+  { code: "BA", hub: "LHR", premium: 1.17 },
+  { code: "IB", hub: "MAD", premium: 1.09 },
+  { code: "JL", hub: "HND", premium: 1.19 },
+  { code: "NH", hub: "HND", premium: 1.19 },
+  { code: "CX", hub: "HKG", premium: 1.13 },
+  { code: "AZ", hub: "FCO", premium: 1.07 },
+  { code: "TP", hub: "LIS", premium: 0.98 },
+  { code: "A3", hub: "ATH", premium: 0.97 },
+  { code: "UA", hub: "ORD", premium: 1.11 },
+  { code: "DL", hub: "ATL", premium: 1.12 },
+  { code: "AA", hub: "DFW", premium: 1.1 },
+  { code: "AC", hub: "YYZ", premium: 1.08 },
+  { code: "AI", hub: "DEL", premium: 0.9 },
+  { code: "PC", hub: "SAW", premium: 0.72 },
+  { code: "W6", hub: "BUD", premium: 0.68 },
+  { code: "FR", hub: "STN", premium: 0.65 },
+  { code: "U2", hub: "LGW", premium: 0.7 },
+  { code: "VY", hub: "BCN", premium: 0.71 },
+  { code: "DY", hub: "OSL", premium: 0.74 },
+  { code: "EW", hub: "DUS", premium: 0.76 },
+  { code: "D8", hub: "OSL", premium: 0.7 },
 ];
 
-const AIRCRAFT = ["Boeing 787-9", "Airbus A350-900", "Boeing 777-300ER", "Airbus A330-300", "Airbus A321neo"];
+const AIRCRAFT = [
+  "Boeing 787-9",
+  "Airbus A350-900",
+  "Boeing 777-300ER",
+  "Airbus A330-300",
+  "Airbus A321neo",
+  "Boeing 737 MAX 8",
+  "Airbus A320neo",
+  "Boeing 787-8",
+];
 
 const CABIN_MULTIPLIER: Record<string, number> = {
   ECONOMY: 1,
@@ -71,6 +126,71 @@ const CABIN_MULTIPLIER: Record<string, number> = {
   BUSINESS: 3.6,
   FIRST: 6.2,
 };
+
+/* ------------------------------- fare families ------------------------------ */
+
+interface BrandSpec {
+  brand: FareBrand;
+  multiplier: number;
+  baggage: Baggage;
+  refundable: boolean;
+  changeable: boolean;
+}
+
+/**
+ * Most of a route's real price spread comes from fare families rather than
+ * from different flights, so each flight is offered at up to three prices.
+ */
+function brandsFor(lowCost: boolean): BrandSpec[] {
+  if (lowCost) {
+    return [
+      {
+        brand: "BASIC",
+        multiplier: 1,
+        baggage: { carryOnIncluded: false, checkedBags: 0 },
+        refundable: false,
+        changeable: false,
+      },
+      {
+        brand: "STANDARD",
+        multiplier: 1.34,
+        baggage: { carryOnIncluded: true, checkedBags: 1, checkedKg: 20 },
+        refundable: false,
+        changeable: true,
+      },
+      {
+        brand: "FLEX",
+        multiplier: 1.78,
+        baggage: { carryOnIncluded: true, checkedBags: 2, checkedKg: 20 },
+        refundable: true,
+        changeable: true,
+      },
+    ];
+  }
+  return [
+    {
+      brand: "BASIC",
+      multiplier: 1,
+      baggage: { carryOnIncluded: true, checkedBags: 0 },
+      refundable: false,
+      changeable: false,
+    },
+    {
+      brand: "STANDARD",
+      multiplier: 1.19,
+      baggage: { carryOnIncluded: true, checkedBags: 1, checkedKg: 23 },
+      refundable: false,
+      changeable: true,
+    },
+    {
+      brand: "FLEX",
+      multiplier: 1.57,
+      baggage: { carryOnIncluded: true, checkedBags: 2, checkedKg: 23 },
+      refundable: true,
+      changeable: true,
+    },
+  ];
+}
 
 /* ---------------------------------- pricing ---------------------------------- */
 
@@ -117,9 +237,6 @@ function chooseHub(
   const direct = distanceBetween(origin, destination);
 
   // A connection through the origin or the destination is not a connection.
-  // Without this guard, LOT (hub WAW) produced "WAW → KIX via WAW" with a
-  // zero-length first segment, because a via-hub distance of 0 + direct
-  // always beat the detour threshold.
   const usable = (hub: string): boolean => hub !== origin && hub !== destination;
 
   if (usable(carrierHub)) {
@@ -131,9 +248,9 @@ function chooseHub(
     }
   }
 
-  const alternatives = ["IST", "DXB", "DOH", "FRA", "AMS", "HEL", "ICN", "PEK", "SIN", "CDG"].filter(
-    usable,
-  );
+  const alternatives = [
+    "IST", "DXB", "DOH", "FRA", "AMS", "HEL", "ICN", "PEK", "SIN", "CDG", "LHR", "ZRH", "VIE", "MUC",
+  ].filter(usable);
 
   let best: string | null = null;
   let bestDetour = Infinity;
@@ -149,7 +266,7 @@ function chooseHub(
   }
 
   // A little randomness so every mock 1-stop is not the same airport.
-  if (best && alternatives.length > 0 && rand() < 0.25) return pick(rand, alternatives);
+  if (best && alternatives.length > 0 && rand() < 0.3) return pick(rand, alternatives);
   return best;
 }
 
@@ -157,9 +274,10 @@ function buildSegment(
   from: string,
   to: string,
   departEpoch: number,
-  carrier: Airline,
+  carrier: MockCarrier,
+  name: string,
   rand: () => number,
-): { segment: Segment; arriveEpoch: number } {
+): { segment: Segment; arriveEpoch: number; distanceKm: number } {
   const a = getAirport(from);
   const b = getAirport(to);
   const distance = a && b ? haversineKm(a.lat, a.lon, b.lat, b.lon) : 1000;
@@ -173,13 +291,19 @@ function buildSegment(
       departureAt: wallClockInZone(departEpoch, a?.tz ?? "UTC"),
       arrivalAt: wallClockInZone(arriveEpoch, b?.tz ?? "UTC"),
       carrierCode: carrier.code,
-      carrierName: carrier.name,
+      carrierName: name,
       flightNumber: String(100 + Math.floor(rand() * 899)),
       aircraft: pick(rand, AIRCRAFT),
       durationMinutes: minutes,
     },
     arriveEpoch,
+    distanceKm: distance,
   };
+}
+
+interface BuiltItinerary {
+  itinerary: Itinerary;
+  distanceKm: number;
 }
 
 function buildItinerary(
@@ -188,13 +312,14 @@ function buildItinerary(
   destination: string,
   date: string,
   stops: number,
-  carrier: Airline & { hub: string },
+  carrier: MockCarrier,
+  name: string,
+  departHour: number,
   rand: () => number,
-): Itinerary | null {
+): BuiltItinerary | null {
   const originAirport = getAirport(origin);
   if (!originAirport) return null;
 
-  const departHour = 6 + Math.floor(rand() * 15);
   const departMinute = pick(rand, [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
   const startWall = `${date}T${String(departHour).padStart(2, "0")}:${String(departMinute).padStart(2, "0")}:00`;
 
@@ -213,13 +338,16 @@ function buildItinerary(
   waypoints.push(destination);
 
   const segments: Segment[] = [];
+  let distanceKm = 0;
+
   for (let i = 0; i < waypoints.length - 1; i++) {
     const from = waypoints[i];
     const to = waypoints[i + 1];
     if (!from || !to) continue;
 
-    const built = buildSegment(from, to, cursor, carrier, rand);
+    const built = buildSegment(from, to, cursor, carrier, name, rand);
     cursor = built.arriveEpoch;
+    distanceKm += built.distanceKm;
 
     if (i < waypoints.length - 2) {
       const layover = 55 + Math.floor(rand() * 240);
@@ -237,16 +365,22 @@ function buildItinerary(
   const layoverMinutes = segments.reduce((s, seg) => s + (seg.layoverMinutes ?? 0), 0);
 
   return {
-    direction,
-    departureAt: first.departureAt,
-    arrivalAt: last.arrivalAt,
-    durationMinutes: flightMinutes + layoverMinutes,
-    stops: segments.length - 1,
-    segments,
+    distanceKm,
+    itinerary: {
+      direction,
+      departureAt: first.departureAt,
+      arrivalAt: last.arrivalAt,
+      durationMinutes: flightMinutes + layoverMinutes,
+      stops: segments.length - 1,
+      segments,
+    },
   };
 }
 
 /* --------------------------------- provider --------------------------------- */
+
+/** Distinct departure hours so a route returns a full day of options. */
+const DEPARTURE_HOURS = [1, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
 
 export class MockProvider implements FlightProvider {
   readonly id = "mock" as const;
@@ -265,18 +399,31 @@ export class MockProvider implements FlightProvider {
     const cabinMultiplier = CABIN_MULTIPLIER[req.cabin] ?? 1;
     const passengers = req.adults + req.children * 0.75 + req.infants * 0.1;
 
-    const count = Math.min(req.maxPerPair, 8);
+    // Build distinct flights first, then price each one across its fare
+    // families. Three brands per flight is where the price depth comes from.
+    const wantedOffers = Math.min(req.maxPerPair, 120);
+    const products = Math.max(1, Math.ceil(wantedOffers / 3));
+
     const offers: FlightOffer[] = [];
     const fetchedAt = new Date().toISOString();
 
-    for (let i = 0; i < count; i++) {
-      const rand = rng(`${pair.origin}|${pair.destination}|${pair.departureDate}|${pair.returnDate ?? ""}|${req.cabin}|${i}`);
+    for (let i = 0; i < products && offers.length < wantedOffers; i++) {
+      const rand = rng(
+        `${pair.origin}|${pair.destination}|${pair.departureDate}|${pair.returnDate ?? ""}|${req.cabin}|${i}`,
+      );
       const carrier = pick(rand, CARRIERS);
+      const name = airlineName(carrier.code);
+      const lowCost = isLowCost(carrier.code);
 
-      // Direct service only exists on routes an airline could plausibly fly nonstop.
+      // Low-cost carriers do not fly ultra-long-haul.
+      if (lowCost && distance > 6500) continue;
+
       const canFlyDirect = distance < 12000;
       const roll = rand();
-      const stops = !canFlyDirect ? (roll < 0.6 ? 1 : 2) : roll < 0.22 ? 0 : roll < 0.78 ? 1 : 2;
+      const stops = !canFlyDirect ? (roll < 0.6 ? 1 : 2) : roll < 0.24 ? 0 : roll < 0.8 ? 1 : 2;
+
+      // Spread departures across the clock rather than clustering mid-morning.
+      const departHour = DEPARTURE_HOURS[i % DEPARTURE_HOURS.length] ?? 9;
 
       const outbound = buildItinerary(
         "outbound",
@@ -285,11 +432,15 @@ export class MockProvider implements FlightProvider {
         pair.departureDate,
         stops,
         carrier,
+        name,
+        departHour,
         rand,
       );
       if (!outbound) continue;
 
-      const itineraries: Itinerary[] = [outbound];
+      const itineraries: Itinerary[] = [outbound.itinerary];
+      let distanceFlown = outbound.distanceKm;
+
       if (pair.returnDate) {
         const inbound = buildItinerary(
           "inbound",
@@ -298,9 +449,14 @@ export class MockProvider implements FlightProvider {
           pair.returnDate,
           stops === 0 ? (rand() < 0.7 ? 0 : 1) : stops,
           carrier,
+          name,
+          DEPARTURE_HOURS[(i + 5) % DEPARTURE_HOURS.length] ?? 14,
           rand,
         );
-        if (inbound) itineraries.push(inbound);
+        if (inbound) {
+          itineraries.push(inbound.itinerary);
+          distanceFlown += inbound.distanceKm;
+        }
       }
 
       const legs = itineraries.length;
@@ -308,7 +464,7 @@ export class MockProvider implements FlightProvider {
       const stopDiscount = stops === 0 ? 1.18 : stops === 1 ? 1.0 : 0.87;
       const variance = 0.82 + rand() * 0.45;
 
-      const total =
+      const baseFare =
         base *
         stopDiscount *
         carrier.premium *
@@ -318,23 +474,34 @@ export class MockProvider implements FlightProvider {
         variance *
         Math.max(1, passengers);
 
-      const airlines: Airline[] = [{ code: carrier.code, name: carrier.name }];
+      const airlines: Airline[] = [{ code: carrier.code, name }];
+      const co2Kg = estimateCo2Kg(distanceFlown, req.cabin);
 
-      offers.push({
-        id: `mock:${pair.origin}-${pair.destination}:${pair.departureDate}:${i}`,
-        provider: "mock",
-        origin: pair.origin,
-        destination: pair.destination,
-        price: { total: Math.round(total), currency: req.currency },
-        itineraries,
-        airlines,
-        totalDurationMinutes: itineraries.reduce((s, it) => s + it.durationMinutes, 0),
-        maxStops: Math.max(...itineraries.map((it) => it.stops)),
-        cabin: req.cabin,
-        seatsRemaining: 1 + Math.floor(rand() * 8),
-        fetchedAt,
-        warnings: ["Sample data — add API keys in .env for live fares"],
-      });
+      for (const spec of brandsFor(lowCost)) {
+        if (offers.length >= wantedOffers) break;
+
+        offers.push({
+          id: `mock:${pair.origin}-${pair.destination}:${pair.departureDate}:${i}:${spec.brand}`,
+          provider: "mock",
+          origin: pair.origin,
+          destination: pair.destination,
+          price: { total: Math.round(baseFare * spec.multiplier), currency: req.currency },
+          itineraries,
+          airlines,
+          totalDurationMinutes: itineraries.reduce((s, it) => s + it.durationMinutes, 0),
+          maxStops: Math.max(...itineraries.map((it) => it.stops)),
+          cabin: req.cabin,
+          fareBrand: spec.brand,
+          baggage: spec.baggage,
+          refundable: spec.refundable,
+          changeable: spec.changeable,
+          co2Kg,
+          distanceKm: Math.round(distanceFlown),
+          seatsRemaining: 1 + Math.floor(rand() * 8),
+          fetchedAt,
+          warnings: ["Sample data — add API keys in .env for live fares"],
+        });
+      }
     }
 
     return offers;

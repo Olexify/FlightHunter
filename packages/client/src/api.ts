@@ -1,6 +1,8 @@
 import type {
+  AirlineInfo,
   Airport,
   Alert,
+  CustomPreset,
   PricePoint,
   RoutePreset,
   SavedSearch,
@@ -78,12 +80,20 @@ export interface Meta {
   warnings: string[];
   presets: RoutePreset[];
   currencies: string[];
+  airlines: AirlineInfo[];
   airports: number;
   dataLicense: string;
 }
 
 export const api = {
   meta: () => call<Meta>("/meta"),
+
+  presets: () => call<{ builtIn: RoutePreset[]; custom: CustomPreset[] }>("/presets"),
+  presetCreate: (name: string, origins: string[], destinations: string[]) =>
+    call<{ preset: CustomPreset }>("/presets", json({ name, origins, destinations })).then(
+      (r) => r.preset,
+    ),
+  presetRemove: (id: string) => call<void>(`/presets/${id}`, { method: "DELETE" }),
 
   airports: (q: string, limit = 8, signal?: AbortSignal) =>
     call<{ airports: Airport[] }>(
