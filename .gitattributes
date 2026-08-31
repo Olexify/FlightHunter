@@ -1,0 +1,8 @@
+# Normalise line endings so the repo stays consistent across Windows and CI.
+* text=auto eol=lf
+
+# Binary / generated assets should never be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary
+package-lock.json -diff

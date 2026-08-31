@@ -1,7 +1,26 @@
 node_modules/
-client/node_modules/
-.idea/
 dist/
-client/dist/
+*.tsbuildinfo
+
+# Local secrets
 .env
+.env.local
 *.local
+
+# SQLite database and its write-ahead log.
+# Scoped deliberately: a bare `data/` would also match
+# packages/server/src/data/, excluding the shipped airport dataset.
+/data/
+packages/server/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Editors
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*

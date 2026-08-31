@@ -1,0 +1,26 @@
+{
+  "//": "Type-checks test files, which the package builds exclude so they never ship in dist.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "paths": {
+      "@flighthunter/shared": ["./packages/shared/src/index.ts"]
+    },
+    "baseUrl": "."
+  },
+  "include": [
+    "packages/*/src/**/*.test.ts",
+    "packages/server/src/testFixtures.ts",
+    "vitest.config.ts"
+  ]
+}

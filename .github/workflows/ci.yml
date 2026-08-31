@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check (including tests)
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The airport dataset is a runtime asset that tsc does not emit; a broken
+      # copy step only shows up when the built server actually boots.
+      - name: Smoke-test the built server
+        run: |
+          node packages/server/dist/index.js &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4000/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:4000/api/health
+          curl -sf "http://localhost:4000/api/airports?q=tokyo" | grep -q NRT
+          curl -sf -X POST http://localhost:4000/api/search \
+            -H 'Content-Type: application/json' \
+            -d '{"origins":["WAW"],"destinations":["NRT"],"departureDate":"2030-06-01"}' \
+            | grep -q '"offers"'
+          kill $SERVER_PID
