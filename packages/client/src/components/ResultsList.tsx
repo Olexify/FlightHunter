@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FlightOffer } from "@flighthunter/shared";
 import { formatDuration, formatPrice } from "@flighthunter/shared";
+import type { Settings } from "../hooks/useSettings";
 import FlightCard from "./FlightCard";
 
 interface Props {
@@ -8,19 +9,33 @@ interface Props {
   pinned: string[];
   onTogglePin: (id: string) => void;
   loading: boolean;
+  settings: Settings;
 }
 
-const PAGE = 25;
+/** Identity of the physical flight, ignoring which fare family it is sold as. */
+function flightKey(o: FlightOffer): string {
+  const legs = o.itineraries.map((it) =>
+    it.segments.length > 0
+      ? it.segments.map((s) => `${s.carrierCode}${s.flightNumber ?? ""}@${s.departureAt}`).join("+")
+      : `${it.departureAt}>${it.arrivalAt}`,
+  );
+  return `${o.origin}-${o.destination}|${legs.join("||")}`;
+}
 
-export default function ResultsList({ offers, pinned, onTogglePin, loading }: Props) {
+export default function ResultsList({ offers, pinned, onTogglePin, loading, settings }: Props) {
   const [airline, setAirline] = useState("");
   const [maxStops, setMaxStops] = useState<number | null>(null);
-  const [limit, setLimit] = useState(PAGE);
+  const [onlyWithBag, setOnlyWithBag] = useState(false);
+  const [limit, setLimit] = useState(settings.resultsPerPage);
+
+  // A settings change should take effect immediately, not after a new search.
+  useEffect(() => setLimit(settings.resultsPerPage), [settings.resultsPerPage]);
 
   const filtered = useMemo(() => {
     const needle = airline.trim().toLowerCase();
     return offers.filter((o) => {
       if (maxStops !== null && o.maxStops > maxStops) return false;
+      if (onlyWithBag && (!o.baggage || o.baggage.checkedBags < 1)) return false;
       if (needle) {
         // Match on code OR name, so "TK" and "turkish" both work regardless
         // of which provider supplied the offer.
@@ -29,17 +44,52 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
       }
       return true;
     });
-  }, [offers, airline, maxStops]);
+  }, [offers, airline, maxStops, onlyWithBag]);
+
+  /**
+   * With fare-family collapsing on, show one row per physical flight and offer
+   * the other fares as chips — otherwise every flight appears three times.
+   */
+  const { rows, siblingsFor } = useMemo(() => {
+    if (!settings.groupFareBrands) {
+      return { rows: filtered, siblingsFor: new Map<string, FlightOffer[]>() };
+    }
+
+    const groups = new Map<string, FlightOffer[]>();
+    for (const o of filtered) {
+      const key = flightKey(o);
+      const list = groups.get(key);
+      if (list) list.push(o);
+      else groups.set(key, [o]);
+    }
+
+    const primary: FlightOffer[] = [];
+    const siblings = new Map<string, FlightOffer[]>();
+
+    for (const group of groups.values()) {
+      const sorted = [...group].sort((a, b) => a.price.total - b.price.total);
+      const head = sorted[0];
+      if (!head) continue;
+      primary.push(head);
+      if (sorted.length > 1) siblings.set(head.id, sorted.slice(1));
+    }
+
+    // Preserve the server's ordering of whichever fare became the group head.
+    const order = new Map(filtered.map((o, i) => [o.id, i]));
+    primary.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+
+    return { rows: primary, siblingsFor: siblings };
+  }, [filtered, settings.groupFareBrands]);
 
   const { cheapestId, fastestId } = useMemo(() => {
     let cheapest: FlightOffer | null = null;
     let fastest: FlightOffer | null = null;
-    for (const o of filtered) {
+    for (const o of rows) {
       if (!cheapest || o.price.total < cheapest.price.total) cheapest = o;
       if (!fastest || o.totalDurationMinutes < fastest.totalDurationMinutes) fastest = o;
     }
     return { cheapestId: cheapest?.id ?? null, fastestId: fastest?.id ?? null };
-  }, [filtered]);
+  }, [rows]);
 
   /** Best fare from each departure airport — the multi-origin payoff. */
   const perOrigin = useMemo(() => {
@@ -59,7 +109,7 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
     );
   }
 
-  const visible = filtered.slice(0, limit);
+  const visible = rows.slice(0, limit);
 
   return (
     <div className="results">
@@ -84,8 +134,11 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
       )}
 
       <div className="refine">
-        <strong>{filtered.length}</strong>
-        <span className="muted">of {offers.length} shown</span>
+        <strong>{rows.length}</strong>
+        <span className="muted">
+          of {offers.length}
+          {settings.groupFareBrands && rows.length !== filtered.length ? " (fares grouped)" : ""}
+        </span>
 
         <input
           type="search"
@@ -93,7 +146,7 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
           value={airline}
           onChange={(e) => {
             setAirline(e.target.value);
-            setLimit(PAGE);
+            setLimit(settings.resultsPerPage);
           }}
         />
 
@@ -101,7 +154,7 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
           value={maxStops === null ? "any" : String(maxStops)}
           onChange={(e) => {
             setMaxStops(e.target.value === "any" ? null : Number(e.target.value));
-            setLimit(PAGE);
+            setLimit(settings.resultsPerPage);
           }}
         >
           <option value="any">Any stops</option>
@@ -110,13 +163,23 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
           <option value="2">Up to 2 stops</option>
         </select>
 
-        {(airline || maxStops !== null) && (
+        <label className="toggle inline">
+          <input
+            type="checkbox"
+            checked={onlyWithBag}
+            onChange={(e) => setOnlyWithBag(e.target.checked)}
+          />
+          <span>Bag included</span>
+        </label>
+
+        {(airline || maxStops !== null || onlyWithBag) && (
           <button
             type="button"
             className="btn-link"
             onClick={() => {
               setAirline("");
               setMaxStops(null);
+              setOnlyWithBag(false);
             }}
           >
             Clear
@@ -124,7 +187,7 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
         )}
       </div>
 
-      {filtered.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="empty">Nothing matches those refinements.</div>
       ) : (
         <>
@@ -137,13 +200,21 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading }: Pr
                 onTogglePin={onTogglePin}
                 isCheapest={o.id === cheapestId}
                 isFastest={o.id === fastestId && o.id !== cheapestId}
+                settings={settings}
+                {...(siblingsFor.get(o.id) ? { siblings: siblingsFor.get(o.id) } : {})}
+                onPickSibling={onTogglePin}
               />
             ))}
           </div>
 
-          {filtered.length > visible.length && (
-            <button type="button" className="btn-more" onClick={() => setLimit((l) => l + PAGE)}>
-              Show {Math.min(PAGE, filtered.length - visible.length)} more
+          {rows.length > visible.length && (
+            <button
+              type="button"
+              className="btn-more"
+              onClick={() => setLimit((l) => l + settings.resultsPerPage)}
+            >
+              Show {Math.min(settings.resultsPerPage, rows.length - visible.length)} more
+              <span className="muted"> · {rows.length - visible.length} remaining</span>
             </button>
           )}
         </>

@@ -1,16 +1,22 @@
 import { Router, type Response } from "express";
 import { z } from "zod";
 import {
+  ALLIANCE_LABELS,
   COMMON_CURRENCIES,
   CreateAlert,
+  CreateCustomPreset,
   CreateSavedSearch,
+  DEFAULT_RANKING_WEIGHTS,
+  FARE_BRAND_LABELS,
+  PRESET_CATEGORY_LABELS,
   ROUTE_PRESETS,
   SearchRequest,
+  allAirlines,
 } from "@flighthunter/shared";
 import { config, configWarnings } from "../config.js";
 import { cacheStats, clearSearchCache, runSearch } from "../core/orchestrator.js";
 import { airportCount, datasetLicense, getAirport, nearbyAirports, searchAirports } from "../data/airports.js";
-import { alerts, priceHistory, savedSearches } from "../db/repositories.js";
+import { alerts, customPresets, priceHistory, savedSearches } from "../db/repositories.js";
 import { pollAlertsOnce } from "../jobs/alertPoller.js";
 import { asyncHandler } from "../middleware/errors.js";
 import { rateLimit } from "../middleware/rateLimit.js";
@@ -51,11 +57,33 @@ export function createRouter(): Router {
       mockOnly: isMockOnly(),
       warnings: configWarnings(),
       presets: ROUTE_PRESETS,
+      presetCategories: PRESET_CATEGORY_LABELS,
       currencies: COMMON_CURRENCIES,
+      // Powers the alliance filter and the airline picker in the UI.
+      airlines: allAirlines(),
+      alliances: ALLIANCE_LABELS,
+      fareBrands: FARE_BRAND_LABELS,
+      defaultRankingWeights: DEFAULT_RANKING_WEIGHTS,
       airports: airportCount(),
       dataLicense: datasetLicense(),
       cache: cacheStats(),
     });
+  });
+
+  /* --------------------------- custom presets --------------------------- */
+
+  router.get("/presets", (_req, res) => {
+    res.json({ builtIn: ROUTE_PRESETS, custom: customPresets.list() });
+  });
+
+  router.post("/presets", (req, res) => {
+    const { name, origins, destinations } = CreateCustomPreset.parse(req.body);
+    res.status(201).json({ preset: customPresets.create(name, origins, destinations) });
+  });
+
+  router.delete("/presets/:id", (req, res) => {
+    if (!customPresets.remove(req.params.id)) throw AppError.notFound("No such preset");
+    res.status(204).end();
   });
 
   /* ------------------------------ airports ------------------------------ */

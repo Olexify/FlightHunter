@@ -50,6 +50,48 @@ export type CabinClass = z.infer<typeof CabinClass>;
 export const ProviderId = z.enum(["amadeus", "travelpayouts", "mock"]);
 export type ProviderId = z.infer<typeof ProviderId>;
 
+export const Alliance = z.enum(["STAR_ALLIANCE", "SKYTEAM", "ONEWORLD", "NONE"]);
+export type Alliance = z.infer<typeof Alliance>;
+
+/**
+ * Fare families. The same physical flight is usually sold at several prices
+ * with different baggage and flexibility, which is where most of the real
+ * price spread on a route comes from.
+ */
+export const FareBrand = z.enum(["BASIC", "STANDARD", "FLEX"]);
+export type FareBrand = z.infer<typeof FareBrand>;
+
+export const FARE_BRAND_LABELS: Record<FareBrand, string> = {
+  BASIC: "Basic",
+  STANDARD: "Standard",
+  FLEX: "Flex",
+};
+
+export const Baggage = z.object({
+  carryOnIncluded: z.boolean(),
+  checkedBags: z.number().int().nonnegative(),
+  checkedKg: z.number().int().positive().optional(),
+});
+export type Baggage = z.infer<typeof Baggage>;
+
+/**
+ * User-tunable weights for the "best value" score. Exposed in Settings so the
+ * ranking can be biased toward price or toward comfort.
+ */
+export const RankingWeights = z.object({
+  price: z.number().min(0).max(1).default(0.6),
+  duration: z.number().min(0).max(1).default(0.4),
+  /** Penalty applied per connection. */
+  stops: z.number().min(0).max(0.5).default(0.08),
+});
+export type RankingWeights = z.infer<typeof RankingWeights>;
+
+export const DEFAULT_RANKING_WEIGHTS: RankingWeights = {
+  price: 0.6,
+  duration: 0.4,
+  stops: 0.08,
+};
+
 export const SortKey = z.enum(["best", "price", "duration", "stops", "departure", "arrival"]);
 export type SortKey = z.infer<typeof SortKey>;
 
@@ -136,6 +178,15 @@ export const FlightOffer = z.object({
   /** Worst leg's stop count, so a 0-stop out / 2-stop back trip filters as 2. */
   maxStops: z.number().int().nonnegative(),
   cabin: CabinClass.optional(),
+  /** Fare family this price belongs to. */
+  fareBrand: FareBrand.optional(),
+  baggage: Baggage.optional(),
+  refundable: z.boolean().optional(),
+  changeable: z.boolean().optional(),
+  /** Estimated kg of CO2 per passenger across every flown segment. */
+  co2Kg: z.number().nonnegative().optional(),
+  /** Summed great-circle distance actually flown, including detours. */
+  distanceKm: z.number().nonnegative().optional(),
   seatsRemaining: z.number().int().positive().optional(),
   deepLink: z.string().optional(),
   /** 0-100 composite desirability; higher is better. Filled by the ranker. */
@@ -163,7 +214,8 @@ export const SearchRequest = z
     cabin: CabinClass.default("ECONOMY"),
 
     currency: CurrencyCode.default("EUR"),
-    maxPerPair: z.number().int().min(1).max(50).default(8),
+    /** Offers requested per route. Raised so searches return real depth. */
+    maxPerPair: z.number().int().min(1).max(120).default(24),
 
     /** Search departureDate ± flexDays, producing a price grid. 0 disables. */
     flexDays: z.number().int().min(0).max(7).default(0),
@@ -178,6 +230,24 @@ export const SearchRequest = z
 
     includeAirlines: z.array(AirlineCode).max(30).default([]),
     excludeAirlines: z.array(AirlineCode).max(30).default([]),
+    /** Keep only carriers in these alliances. Empty means no restriction. */
+    alliances: z.array(Alliance).max(4).default([]),
+
+    /** Only these fare families. Empty means all. */
+    fareBrands: z.array(FareBrand).max(3).default([]),
+    /** Drop fares that include no checked bag. */
+    requireCheckedBag: z.boolean().default(false),
+    /** Drop fares from low-cost carriers. */
+    excludeLowCost: z.boolean().default(false),
+
+    /** Only routings that connect through one of these airports. */
+    viaAirports: z.array(IataCode).max(10).default([]),
+    /** Never route through these airports. */
+    avoidAirports: z.array(IataCode).max(20).default([]),
+    /** Hard cap on flight count per direction, independent of stop count. */
+    maxSegments: z.number().int().min(1).max(6).optional(),
+    /** Exclude departures between 01:00 and 05:00 local. */
+    avoidRedEye: z.boolean().default(false),
 
     departAfter: LocalTime.optional(),
     departBefore: LocalTime.optional(),
@@ -185,6 +255,8 @@ export const SearchRequest = z
     arriveBefore: LocalTime.optional(),
 
     sort: SortKey.default("best"),
+    /** Overrides the default "best value" weighting. */
+    rankingWeights: RankingWeights.optional(),
   })
   .superRefine((v, ctx) => {
     if (v.returnDate && v.returnDate < v.departureDate) {
@@ -268,6 +340,22 @@ export type SearchResponse = z.infer<typeof SearchResponse>;
 /* ------------------------------------------------------------------ */
 /* Persistence-backed features                                         */
 /* ------------------------------------------------------------------ */
+
+/** A user-defined route corridor, saved alongside the built-in presets. */
+export const CustomPreset = z.object({
+  id: z.string(),
+  name: z.string(),
+  origins: z.array(IataCode),
+  destinations: z.array(IataCode),
+  createdAt: z.string(),
+});
+export type CustomPreset = z.infer<typeof CustomPreset>;
+
+export const CreateCustomPreset = z.object({
+  name: z.string().trim().min(1).max(80),
+  origins: z.array(IataCode).min(1).max(30),
+  destinations: z.array(IataCode).min(1).max(30),
+});
 
 export const SavedSearch = z.object({
   id: z.string(),

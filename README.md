@@ -11,7 +11,9 @@ signing up for anything.
 
 ## Quick start
 
-```bash
+Run these as two separate commands:
+
+```
 npm install
 npm run dev
 ```
@@ -20,6 +22,10 @@ Then open **http://localhost:5173**.
 
 That's it — no `.env`, no keys, no database setup. The API runs on port 4000 and the UI proxies to
 it automatically.
+
+> **Windows PowerShell:** don't join them with `&&` — Windows PowerShell 5.1 (the default in the
+> WebStorm terminal) rejects it with *"The token '&&' is not a valid statement separator"*. Run
+> them on separate lines, or use `npm install; npm run dev`.
 
 To use live fares, copy `.env.example` to `.env` and add free
 [Amadeus](https://developers.amadeus.com) credentials.
@@ -32,10 +38,26 @@ To use live fares, copy `.env.example` to `.env` and add free
 - Any route worldwide — **6,071 airports** with ranked autocomplete by city, airport name or IATA code
 - City/metro codes work: `NYC` searches JFK + EWR + LGA, `LON` covers all five London airports
 - Many-to-many search — 5 origins × 3 destinations is one click
+- **22 route presets** across five categories, plus your own saved corridors
 - Nearby-airport expansion: include everything within 100–350 km of your origin
 - Flexible dates — a ±7 day price strip showing the cheapest fare per day
 - Round trips with **both legs** modelled properly: real durations, stops and routings for each direction
-- Filters: cabin, stops, price ceiling, total duration, layover length, departure time window, airline include/exclude
+
+**Price depth**
+- Every flight is priced across **three fare families** — Basic, Standard and Flex — with the
+  baggage, refundability and change rules that justify the difference. That is where most of a
+  route's real price spread lives.
+- Result volume is yours to set: from a quick 3 offers per route up to 120. A five-origin search
+  at full depth returns well over a thousand distinct prices in under a second.
+- Optionally collapse fare families to one row per flight, with the other fares one click away.
+
+**Filters**
+- Cabin, stops, price ceiling, total duration, layover length
+- Departure *and* arrival time windows, plus a no-red-eye switch
+- Airline include/exclude, **alliance** (Star Alliance / SkyTeam / Oneworld), hide low-cost carriers
+- Fare family, "checked bag included"
+- Connect *via* specific airports, or never route through them
+- Maximum flights per leg, independent of stop count
 
 **Ranking**
 - **Best value** scoring that weighs price against duration and connections, measured as
@@ -50,8 +72,16 @@ To use live fares, copy `.env.example` to `.env` and add free
 - **Shareable URLs** — the whole search encodes into the address bar
 - **CSV export** of any result set
 
-**Quality of life**
+**Customisation** — a Settings panel that actually changes behaviour
+- **Tune what "best value" means**: sliders for price sensitivity, duration sensitivity and the
+  penalty per connection. Set price to 1.0 and the ranking becomes pure cheapest-first.
+- Defaults for currency, cabin, passengers, stops, flexible dates and sort order
+- Result volume and page size
+- Comfortable or compact density; show or hide the score, baggage, CO₂ and seats-left
 - Light / dark / system theming
+
+**Quality of life**
+- Baggage allowance, CO₂ estimate and distance flown on every result
 - Pin flights to a compare tray
 - Per-provider status: who answered, how fast, what failed, what was served from cache
 - Keyboard: `Ctrl`/`⌘`+`Enter` to search, `/` to focus, `Esc` to cancel
@@ -65,7 +95,7 @@ To use live fares, copy `.env.example` to `.env` and add free
 | `npm run dev` | API + UI with hot reload |
 | `npm run build` | Production build of all three packages |
 | `npm start` | Run the built server |
-| `npm test` | Run the test suite (135 tests) |
+| `npm test` | Run the test suite (164 tests) |
 | `npm run typecheck` | Type-check everything, tests included |
 
 ---
@@ -105,9 +135,10 @@ be silently mixed into real results.
   or HTTP client — the chart is hand-written SVG, the styles are plain CSS, and HTTP uses the
   platform `fetch`. The only native dependency is `better-sqlite3`, which installs a prebuilt binary
   (no compiler required).
-- **Search is call-budgeted.** A single search is capped at 150 upstream requests, and flexible-date
+- **Search is call-budgeted.** A single search is capped at 400 upstream requests, and flexible-date
   exploration only widens the routes that already look competitive — otherwise 30 origins × 30
-  destinations × ±7 days would be 13,500 API calls per click.
+  destinations × ±7 days would be 13,500 API calls per click. Raising *offers per route* asks each
+  provider for more depth per call rather than making more calls.
 - **The sandbox is not real pricing.** With `AMADEUS_BASE_URL` pointing at `test.api.amadeus.com`
   you get sandbox data. The app says so in the UI rather than pretending otherwise.
 - Airport data derives from [OpenFlights](https://openflights.org/data.html), licensed under

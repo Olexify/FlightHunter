@@ -1,5 +1,5 @@
 import type { FlightOffer, SearchRequest } from "@flighthunter/shared";
-import { localTimeToMinutes, minutesIntoDay } from "@flighthunter/shared";
+import { allianceOf, isLowCost, localTimeToMinutes, minutesIntoDay } from "@flighthunter/shared";
 
 /**
  * Post-normalisation filtering. Providers accept only a subset of these
@@ -30,6 +30,22 @@ function layoverRange(offer: FlightOffer): { min: number; max: number } | null {
 /** Time-of-day windows apply to the OUTBOUND leg, which is what users mean. */
 function outbound(offer: FlightOffer) {
   return offer.itineraries.find((i) => i.direction === "outbound") ?? offer.itineraries[0];
+}
+
+/** Every airport touched as a CONNECTION, excluding true origins and finals. */
+function connectionAirports(offer: FlightOffer): string[] {
+  const out: string[] = [];
+  for (const it of offer.itineraries) {
+    for (const seg of it.segments.slice(0, -1)) out.push(seg.to);
+  }
+  return out;
+}
+
+/** Departures in the small hours, which many travellers want to avoid. */
+function isRedEye(departureAt: string): boolean {
+  const minutes = minutesIntoDay(departureAt);
+  if (minutes === null) return false;
+  return minutes >= 60 && minutes < 300; // 01:00–04:59
 }
 
 function withinWindow(
@@ -83,6 +99,46 @@ export function applyFilters(
     }
     if (exclude.size > 0 && codes.some((c) => exclude.has(c))) {
       rejected.push({ offerId: offer.id, reason: "excluded airline" });
+      continue;
+    }
+    if (req.alliances.length > 0 && !codes.some((c) => req.alliances.includes(allianceOf(c)))) {
+      rejected.push({ offerId: offer.id, reason: "outside selected alliances" });
+      continue;
+    }
+    if (req.excludeLowCost && codes.some((c) => isLowCost(c))) {
+      rejected.push({ offerId: offer.id, reason: "low-cost carrier" });
+      continue;
+    }
+
+    if (req.fareBrands.length > 0 && (!offer.fareBrand || !req.fareBrands.includes(offer.fareBrand))) {
+      rejected.push({ offerId: offer.id, reason: "fare family not selected" });
+      continue;
+    }
+    // Only enforce a checked bag when the provider actually told us about
+    // baggage; otherwise this would silently drop every Amadeus result.
+    if (req.requireCheckedBag && offer.baggage && offer.baggage.checkedBags < 1) {
+      rejected.push({ offerId: offer.id, reason: "no checked bag included" });
+      continue;
+    }
+
+    const connections = connectionAirports(offer);
+    if (req.avoidAirports.length > 0 && connections.some((c) => req.avoidAirports.includes(c))) {
+      rejected.push({ offerId: offer.id, reason: "routes through an avoided airport" });
+      continue;
+    }
+    if (req.viaAirports.length > 0 && !connections.some((c) => req.viaAirports.includes(c))) {
+      rejected.push({ offerId: offer.id, reason: "does not route via a required airport" });
+      continue;
+    }
+    if (
+      req.maxSegments !== undefined &&
+      offer.itineraries.some((it) => it.segments.length > (req.maxSegments as number))
+    ) {
+      rejected.push({ offerId: offer.id, reason: "too many flights" });
+      continue;
+    }
+    if (req.avoidRedEye && offer.itineraries.some((it) => isRedEye(it.departureAt))) {
+      rejected.push({ offerId: offer.id, reason: "red-eye departure" });
       continue;
     }
 

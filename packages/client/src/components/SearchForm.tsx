@@ -1,8 +1,10 @@
-import { useState } from "react";
-import type { CabinClass, RoutePreset, SortKey } from "@flighthunter/shared";
+import { useMemo, useState } from "react";
+import type { CabinClass, CustomPreset, RoutePreset, SortKey } from "@flighthunter/shared";
 import { todayPlus } from "@flighthunter/shared";
 import type { FormState } from "../searchParams";
 import AirportPicker from "./AirportPicker";
+import AdvancedFilters from "./AdvancedFilters";
+import PresetPicker from "./PresetPicker";
 
 interface Props {
   form: FormState;
@@ -10,8 +12,12 @@ interface Props {
   onSubmit: () => void;
   onCancel: () => void;
   onSave: () => void;
+  onResetFilters: () => void;
   loading: boolean;
   presets: RoutePreset[];
+  customPresets: CustomPreset[];
+  onSavePreset: () => void;
+  onDeletePreset: (id: string) => void;
   currencies: string[];
   routeCount: number;
 }
@@ -38,16 +44,38 @@ export default function SearchForm({
   onSubmit,
   onCancel,
   onSave,
+  onResetFilters,
   loading,
   presets,
+  customPresets,
+  onSavePreset,
+  onDeletePreset,
   currencies,
   routeCount,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
 
-  const applyPreset = (preset: RoutePreset): void => {
-    onChange({ origins: preset.origins, destinations: preset.destinations });
-  };
+  /** How many advanced filters are actually narrowing the search. */
+  const activeFilters = useMemo(() => {
+    let n = 0;
+    if (form.includeAirlines.length) n++;
+    if (form.excludeAirlines.length) n++;
+    if (form.alliances.length) n++;
+    if (form.fareBrands.length) n++;
+    if (form.requireCheckedBag) n++;
+    if (form.excludeLowCost) n++;
+    if (form.viaAirports.length) n++;
+    if (form.avoidAirports.length) n++;
+    if (form.maxSegments !== null) n++;
+    if (form.avoidRedEye) n++;
+    if (form.departAfter || form.departBefore) n++;
+    if (form.arriveAfter || form.arriveBefore) n++;
+    if (form.minLayoverMinutes !== null || form.maxLayoverMinutes !== null) n++;
+    if (form.maxDurationHours !== null) n++;
+    if (form.maxPrice !== null) n++;
+    if (form.nearbyRadiusKm > 0) n++;
+    return n;
+  }, [form]);
 
   const swap = (): void => {
     onChange({ origins: form.destinations, destinations: form.origins });
@@ -61,13 +89,14 @@ export default function SearchForm({
         onSubmit();
       }}
     >
-      <div className="presets">
-        {presets.map((p) => (
-          <button key={p.id} type="button" className="preset" title={p.description} onClick={() => applyPreset(p)}>
-            {p.label}
-          </button>
-        ))}
-      </div>
+      <PresetPicker
+        builtIn={presets}
+        custom={customPresets}
+        canSave={form.origins.length > 0 && form.destinations.length > 0}
+        onApply={(origins, destinations) => onChange({ origins, destinations })}
+        onSaveCurrent={onSavePreset}
+        onDeleteCustom={onDeletePreset}
+      />
 
       <AirportPicker
         label="From"
@@ -126,6 +155,31 @@ export default function SearchForm({
           />
         </div>
         <div className="field">
+          <label className="field-label" htmlFor="children">Children</label>
+          <input
+            id="children"
+            type="number"
+            min={0}
+            max={8}
+            value={form.children}
+            onChange={(e) => onChange({ children: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </div>
+        <div className="field">
+          <label className="field-label" htmlFor="infants">Infants</label>
+          <input
+            id="infants"
+            type="number"
+            min={0}
+            max={8}
+            value={form.infants}
+            onChange={(e) => onChange({ infants: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </div>
+      </div>
+
+      <div className="grid3">
+        <div className="field">
           <label className="field-label" htmlFor="cabin">Cabin</label>
           <select id="cabin" value={form.cabin} onChange={(e) => onChange({ cabin: e.target.value as CabinClass })}>
             {CABINS.map((c) => (
@@ -141,9 +195,6 @@ export default function SearchForm({
             ))}
           </select>
         </div>
-      </div>
-
-      <div className="grid3">
         <div className="field">
           <label className="field-label" htmlFor="stops">Max stops</label>
           <select
@@ -159,6 +210,9 @@ export default function SearchForm({
             <option value="any">Any</option>
           </select>
         </div>
+      </div>
+
+      <div className="grid2">
         <div className="field">
           <label className="field-label" htmlFor="flex">Flexible dates</label>
           <select id="flex" value={form.flexDays} onChange={(e) => onChange({ flexDays: Number(e.target.value) })}>
@@ -180,97 +234,19 @@ export default function SearchForm({
         </div>
       </div>
 
-      <button type="button" className="disclosure" onClick={() => setAdvanced((v) => !v)}>
-        {advanced ? "▾" : "▸"} Advanced filters
-      </button>
+      <div className="adv-head">
+        <button type="button" className="disclosure" onClick={() => setAdvanced((v) => !v)}>
+          {advanced ? "▾" : "▸"} Advanced filters
+          {activeFilters > 0 && <span className="filter-count">{activeFilters}</span>}
+        </button>
+        {activeFilters > 0 && (
+          <button type="button" className="btn-link" onClick={onResetFilters}>
+            Clear
+          </button>
+        )}
+      </div>
 
-      {advanced && (
-        <div className="advanced">
-          <div className="grid2">
-            <div className="field">
-              <label className="field-label" htmlFor="nearby">Include nearby airports</label>
-              <select
-                id="nearby"
-                value={form.nearbyRadiusKm}
-                onChange={(e) => onChange({ nearbyRadiusKm: Number(e.target.value) })}
-              >
-                <option value={0}>Exact airports only</option>
-                <option value={100}>Within 100 km</option>
-                <option value={200}>Within 200 km</option>
-                <option value={350}>Within 350 km</option>
-              </select>
-            </div>
-            <div className="field">
-              <label className="field-label" htmlFor="maxPrice">Max price</label>
-              <input
-                id="maxPrice"
-                type="number"
-                min={0}
-                placeholder="any"
-                value={form.maxPrice ?? ""}
-                onChange={(e) =>
-                  onChange({ maxPrice: e.target.value === "" ? null : Number(e.target.value) })
-                }
-              />
-            </div>
-          </div>
-
-          <div className="grid2">
-            <div className="field">
-              <label className="field-label" htmlFor="departAfter">Depart after</label>
-              <input
-                id="departAfter"
-                type="time"
-                value={form.departAfter}
-                onChange={(e) => onChange({ departAfter: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label className="field-label" htmlFor="departBefore">Depart before</label>
-              <input
-                id="departBefore"
-                type="time"
-                value={form.departBefore}
-                onChange={(e) => onChange({ departBefore: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <div className="grid2">
-            <div className="field">
-              <label className="field-label" htmlFor="maxHours">Max total hours</label>
-              <input
-                id="maxHours"
-                type="number"
-                min={1}
-                max={72}
-                placeholder="any"
-                value={form.maxDurationHours ?? ""}
-                onChange={(e) =>
-                  onChange({ maxDurationHours: e.target.value === "" ? null : Number(e.target.value) })
-                }
-              />
-            </div>
-            <div className="field">
-              <label className="field-label" htmlFor="exclude">Exclude airlines</label>
-              <input
-                id="exclude"
-                type="text"
-                placeholder="e.g. SU, PS"
-                value={form.excludeAirlines.join(", ")}
-                onChange={(e) =>
-                  onChange({
-                    excludeAirlines: e.target.value
-                      .split(",")
-                      .map((s) => s.trim().toUpperCase())
-                      .filter(Boolean),
-                  })
-                }
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {advanced && <AdvancedFilters form={form} onChange={onChange} />}
 
       <div className="actions">
         {loading ? (
@@ -278,7 +254,11 @@ export default function SearchForm({
             Cancel search
           </button>
         ) : (
-          <button type="submit" className="btn-primary" disabled={form.origins.length === 0 || form.destinations.length === 0}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={form.origins.length === 0 || form.destinations.length === 0}
+          >
             Search {routeCount} route{routeCount === 1 ? "" : "s"}
           </button>
         )}

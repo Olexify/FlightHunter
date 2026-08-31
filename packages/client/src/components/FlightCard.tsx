@@ -1,6 +1,14 @@
 import { useState } from "react";
-import type { FlightOffer, Itinerary } from "@flighthunter/shared";
-import { formatDuration, formatLocalDateTime, formatLocalTime, formatPrice } from "@flighthunter/shared";
+import type { Baggage, FlightOffer, Itinerary } from "@flighthunter/shared";
+import {
+  co2AsCarKm,
+  FARE_BRAND_LABELS,
+  formatDuration,
+  formatLocalDateTime,
+  formatLocalTime,
+  formatPrice,
+} from "@flighthunter/shared";
+import type { Settings } from "../hooks/useSettings";
 
 interface Props {
   offer: FlightOffer;
@@ -8,6 +16,19 @@ interface Props {
   onTogglePin: (id: string) => void;
   isCheapest: boolean;
   isFastest: boolean;
+  settings: Settings;
+  /** Other fare families for the same flight, when collapsing is on. */
+  siblings?: FlightOffer[];
+  onPickSibling?: (id: string) => void;
+}
+
+/** "1 bag · 23kg" / "Cabin bag only" / "No bags". */
+function baggageLabel(b: Baggage): string {
+  if (b.checkedBags > 0) {
+    const kg = b.checkedKg ? ` · ${b.checkedKg}kg` : "";
+    return `${b.checkedBags} checked bag${b.checkedBags === 1 ? "" : "s"}${kg}`;
+  }
+  return b.carryOnIncluded ? "Cabin bag only" : "No bags included";
 }
 
 /** Renders one directional leg with its own duration and stop count. */
@@ -45,7 +66,16 @@ function Leg({ itinerary }: { itinerary: Itinerary }) {
   );
 }
 
-export default function FlightCard({ offer, pinned, onTogglePin, isCheapest, isFastest }: Props) {
+export default function FlightCard({
+  offer,
+  pinned,
+  onTogglePin,
+  isCheapest,
+  isFastest,
+  settings,
+  siblings,
+  onPickSibling,
+}: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -63,7 +93,12 @@ export default function FlightCard({ offer, pinned, onTogglePin, isCheapest, isF
         <div className="offer-badges">
           {isCheapest && <span className="badge badge-good">Cheapest</span>}
           {isFastest && <span className="badge badge-fast">Fastest</span>}
-          {offer.score !== undefined && (
+          {offer.fareBrand && (
+            <span className={`badge badge-brand brand-${offer.fareBrand.toLowerCase()}`}>
+              {FARE_BRAND_LABELS[offer.fareBrand]}
+            </span>
+          )}
+          {settings.showScore && offer.score !== undefined && (
             <span className="badge badge-score" title="Composite score: price, duration and stops">
               {offer.score.toFixed(0)}
             </span>
@@ -73,17 +108,55 @@ export default function FlightCard({ offer, pinned, onTogglePin, isCheapest, isF
 
         <div className="offer-price">
           <div className="price">{formatPrice(offer.price.total, offer.price.currency)}</div>
-          {offer.seatsRemaining !== undefined && offer.seatsRemaining <= 4 && (
+          {settings.showSeatsLeft && offer.seatsRemaining !== undefined && offer.seatsRemaining <= 4 && (
             <div className="scarce">only {offer.seatsRemaining} left</div>
           )}
         </div>
       </header>
+
+      {/* Fare attributes, the part that explains price differences. */}
+      <div className="offer-attrs">
+        {settings.showBaggage && offer.baggage && (
+          <span className={offer.baggage.checkedBags > 0 ? "attr attr-ok" : "attr"}>
+            🧳 {baggageLabel(offer.baggage)}
+          </span>
+        )}
+        {offer.refundable && <span className="attr attr-ok">↩ Refundable</span>}
+        {offer.changeable && !offer.refundable && <span className="attr">↻ Changeable</span>}
+        {settings.showCo2 && offer.co2Kg !== undefined && offer.co2Kg > 0 && (
+          <span className="attr" title={`About the same as driving ${co2AsCarKm(offer.co2Kg)} km`}>
+            🌱 {offer.co2Kg} kg CO₂
+          </span>
+        )}
+        {offer.distanceKm !== undefined && offer.distanceKm > 0 && (
+          <span className="attr muted">{offer.distanceKm.toLocaleString()} km flown</span>
+        )}
+      </div>
 
       <div className="offer-legs">
         {offer.itineraries.map((it) => (
           <Leg key={it.direction} itinerary={it} />
         ))}
       </div>
+
+      {/* Other fare families for this exact flight. */}
+      {siblings && siblings.length > 0 && (
+        <div className="fare-row">
+          <span className="muted">Other fares:</span>
+          {siblings.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className="fare-chip"
+              onClick={() => onPickSibling?.(s.id)}
+              title={s.baggage ? baggageLabel(s.baggage) : undefined}
+            >
+              {s.fareBrand ? FARE_BRAND_LABELS[s.fareBrand] : "Fare"}{" "}
+              <strong>{formatPrice(s.price.total, s.price.currency)}</strong>
+            </button>
+          ))}
+        </div>
+      )}
 
       <footer className="offer-foot">
         <button type="button" className="btn-link" onClick={() => setOpen((v) => !v)}>

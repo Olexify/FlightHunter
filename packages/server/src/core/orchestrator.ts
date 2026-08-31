@@ -6,7 +6,7 @@ import type {
   SearchRequest,
   SearchResponse,
 } from "@flighthunter/shared";
-import { addDays } from "@flighthunter/shared";
+import { addDays, DEFAULT_RANKING_WEIGHTS } from "@flighthunter/shared";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { expandMetroCodes, nearbyAirports, partitionKnown } from "../data/airports.js";
@@ -24,9 +24,9 @@ import { scoreOffers, sortOffers } from "./rank.js";
  * × 30 destinations × a ±7-day flex window is 13,500 provider requests — which
  * would blow every rate limit and quota in one click.
  */
-const MAX_PROVIDER_CALLS = 150;
+const MAX_PROVIDER_CALLS = 400;
 /** How many of the cheapest routes get explored across flexible dates. */
-const FLEX_PAIR_BUDGET = 6;
+const FLEX_PAIR_BUDGET = 10;
 
 const cache = new TtlCache<FlightOffer[]>(
   config.CACHE_MAX_ENTRIES,
@@ -281,7 +281,7 @@ export async function runSearch(
     warnings.push(`All ${rejected.length} result(s) were removed by your filters — try relaxing them.`);
   }
 
-  scoreOffers(kept);
+  scoreOffers(kept, req.rankingWeights ?? DEFAULT_RANKING_WEIGHTS);
   sortOffers(kept, req.sort);
 
   /* ------------------------------ price grid ------------------------------ */
