@@ -119,18 +119,30 @@ export class TravelpayoutsProvider implements FlightProvider {
       const code = (row.airline ?? "").toUpperCase();
       const airlines: Airline[] = code ? [{ code, name: code }] : [];
 
+      // This endpoint takes no passenger count: every fare it returns is for a
+      // single adult. Publishing it unchanged as the offer total understated a
+      // family of four by a factor of four and made Travelpayouts look like the
+      // cheapest provider on every multi-passenger search.
+      const partySize = Math.max(1, req.adults + req.children);
+      const total = price * partySize;
+
       const offer: FlightOffer = {
         id: `tp:${pair.origin}-${pair.destination}:${departure}:${price}`,
         provider: "travelpayouts",
         origin: pair.origin,
         destination: pair.destination,
-        price: { total: price, currency: req.currency },
+        price: { total, currency: req.currency },
         itineraries,
         airlines,
         totalDurationMinutes: itineraries.reduce((s, it) => s + it.durationMinutes, 0),
         maxStops: Math.max(...itineraries.map((it) => it.stops)),
         fetchedAt,
-        warnings: ["Cached fare — verify on the airline site before booking"],
+        warnings: [
+          "Cached fare — verify on the airline site before booking",
+          ...(partySize > 1
+            ? [`Estimated for ${partySize} passengers from a single-adult fare`]
+            : []),
+        ],
       };
 
       if (row.link) {

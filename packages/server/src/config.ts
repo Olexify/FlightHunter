@@ -37,6 +37,19 @@ const EnvSchema = z.object({
 
   /** Comma-separated allowed origins, or `*`. */
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
+
+  /**
+   * Only enable behind a proxy you actually control.
+   *
+   * Express derives `req.ip` from the client-supplied X-Forwarded-For header
+   * when this is on, which is what the rate limiter keys on. Left on by
+   * default — as it was — any caller can spoof the header and bypass rate
+   * limiting entirely, so it defaults to off.
+   */
+  TRUST_PROXY: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
 });
 
 export type AppConfig = Readonly<

@@ -25,10 +25,19 @@ function signature(offer: FlightOffer): string {
     return `${it.direction}:${it.departureAt}>${it.arrivalAt}:${it.stops}`;
   });
 
+  // Carriers belong in the identity. Without segment detail the leg key above
+  // is just times and stop counts, so a Lufthansa and a Turkish fare departing
+  // at the same minute with the same number of stops would otherwise collapse
+  // into one row and the cheaper airline would silently erase the other.
+  const carriers = offer.airlines
+    .map((a) => a.code.toUpperCase())
+    .sort()
+    .join(",");
+
   // Fare brand is part of the identity: Basic and Flex on the SAME flight are
   // two genuinely different products at different prices, and collapsing them
   // would throw away most of a route's real price spread.
-  return `${offer.origin}-${offer.destination}|${legs.join("||")}|${offer.fareBrand ?? "-"}`;
+  return `${offer.origin}-${offer.destination}|${carriers}|${legs.join("||")}|${offer.fareBrand ?? "-"}`;
 }
 
 /**

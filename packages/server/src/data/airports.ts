@@ -37,19 +37,60 @@ interface IndexedAirport extends Airport {
   _country: string;
 }
 
-const AIRPORTS: IndexedAirport[] = file.rows.map((r) => ({
-  iata: r[0],
-  name: r[1],
-  city: r[2],
-  country: r[3],
-  lat: r[4],
-  lon: r[5],
-  tz: r[6],
-  routes: r[7],
-  _city: r[2].toLowerCase(),
-  _name: r[1].toLowerCase(),
-  _country: r[3].toLowerCase(),
-}));
+const index = (a: Omit<Airport, never>): IndexedAirport => ({
+  ...a,
+  _city: a.city.toLowerCase(),
+  _name: a.name.toLowerCase(),
+  _country: a.country.toLowerCase(),
+});
+
+const AIRPORTS: IndexedAirport[] = file.rows.map((r) =>
+  index({
+    iata: r[0],
+    name: r[1],
+    city: r[2],
+    country: r[3],
+    lat: r[4],
+    lon: r[5],
+    tz: r[6],
+    routes: r[7],
+  }),
+);
+
+/**
+ * Corrections to the shipped OpenFlights snapshot, which predates several
+ * airport openings and closures.
+ *
+ * Without this, Berlin is unreachable: the dataset carries TXL, SXF and THF —
+ * all now permanently closed — and has no row at all for BER, which replaced
+ * them in 2020. Seven built-in presets referenced BER and silently returned
+ * nothing from Berlin.
+ */
+const ADDED: Airport[] = [
+  {
+    iata: "BER",
+    name: "Berlin Brandenburg Airport",
+    city: "Berlin",
+    country: "Germany",
+    lat: 52.3667,
+    lon: 13.5033,
+    tz: "Europe/Berlin",
+    // Roughly the combined traffic of the TXL and SXF rows it replaced.
+    routes: 500,
+  },
+];
+
+/** Permanently closed. Zeroing routes lets the dormant penalty sink them. */
+const CLOSED = new Set(["TXL", "SXF", "THF"]);
+
+for (const a of AIRPORTS) {
+  if (CLOSED.has(a.iata)) a.routes = 0;
+}
+for (const a of ADDED) {
+  if (!AIRPORTS.some((x) => x.iata === a.iata)) AIRPORTS.push(index(a));
+}
+// searchAirports("") relies on this ordering to mean "busiest hubs first".
+AIRPORTS.sort((a, b) => b.routes - a.routes || a.iata.localeCompare(b.iata));
 
 const BY_CODE = new Map<string, IndexedAirport>(AIRPORTS.map((a) => [a.iata, a]));
 
@@ -80,7 +121,6 @@ const METRO_CODES: Record<string, string[]> = {
   YMQ: ["YUL"],
   BKK: ["BKK", "DMK"],
   TSA: ["TPE", "TSA"],
-  BER: ["BER"],
 };
 
 /** Airports behind a metro code, or empty when the code is not one. */
@@ -130,14 +170,20 @@ export function expandMetroCodes(codes: string[]): { codes: string[]; expanded: 
     const members = METRO_CODES[code];
 
     if (members && !BY_CODE.has(code)) {
+      let resolved = 0;
       for (const m of members) {
-        if (BY_CODE.has(m) && !seen.has(m)) {
+        if (!BY_CODE.has(m)) continue;
+        resolved++;
+        if (!seen.has(m)) {
           seen.add(m);
           out.push(m);
           expanded.push(m);
         }
       }
-      continue;
+      // If NOTHING resolved, fall through and keep the original code so
+      // partitionKnown reports it as unknown. Dropping it here made the code
+      // vanish silently — no expansion warning and no unknown-code warning.
+      if (resolved > 0) continue;
     }
     if (!seen.has(code)) {
       seen.add(code);
@@ -184,7 +230,11 @@ export function searchAirports(query: string, limit = 12): Airport[] {
 
     const metroBoost = metroRank.get(a.iata);
     if (metroBoost !== undefined) {
-      scored.push({ a, score: 1200 + metroBoost });
+      // A code that is BOTH a metro code and a real airport must rank itself
+      // first: typing "SHA" meant Hongqiao, but plain array order put Pudong
+      // above it because PVG is listed first in the SHA group.
+      const isExactCode = code === q;
+      scored.push({ a, score: (isExactCode ? 1400 : 1200) + metroBoost });
       continue;
     }
 

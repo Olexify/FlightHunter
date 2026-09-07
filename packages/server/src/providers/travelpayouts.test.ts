@@ -149,3 +149,44 @@ describe("TravelpayoutsProvider normalisation", () => {
     ).rejects.toThrow("bad token");
   });
 });
+
+describe("passenger scaling", () => {
+  it("scales the single-adult fare to the size of the party", async () => {
+    // This endpoint takes no passenger count, so every fare it returns is for
+    // one adult. Publishing it unchanged understated a family of four by 4x
+    // and made Travelpayouts look cheapest on every multi-passenger search.
+    stubFetch([
+      { price: 400, airline: "LO", departure_at: "2026-10-15T10:00:00+02:00", duration_to: 700 },
+    ]);
+
+    const family = SearchRequest.parse({
+      origins: ["WAW"],
+      destinations: ["NRT"],
+      departureDate: "2026-10-15",
+      adults: 2,
+      children: 2,
+    });
+
+    const [offer] = await provider.search(
+      { origin: "WAW", destination: "NRT", departureDate: "2026-10-15" },
+      family,
+      {},
+    );
+
+    expect(offer?.price.total).toBe(1600);
+    expect(offer?.warnings?.some((w) => w.includes("4 passengers"))).toBe(true);
+  });
+
+  it("leaves a single-adult fare untouched", async () => {
+    stubFetch([
+      { price: 400, airline: "LO", departure_at: "2026-10-15T10:00:00+02:00", duration_to: 700 },
+    ]);
+
+    const [offer] = await provider.search(
+      { origin: "WAW", destination: "NRT", departureDate: "2026-10-15" },
+      req,
+      {},
+    );
+    expect(offer?.price.total).toBe(400);
+  });
+});

@@ -3,6 +3,8 @@ import type {
   Airport,
   Alert,
   CustomPreset,
+  ExploreRequestInput,
+  ExploreResponse,
   PricePoint,
   RoutePreset,
   SavedSearch,
@@ -105,6 +107,9 @@ export const api = {
 
   search: (body: SearchRequestInput, signal?: AbortSignal) =>
     call<SearchResponse>("/search", { ...json(body), ...(signal ? { signal } : {}) }),
+
+  explore: (body: ExploreRequestInput, signal?: AbortSignal) =>
+    call<ExploreResponse>("/explore", { ...json(body), ...(signal ? { signal } : {}) }),
 
   /** Triggers a browser download of the current result set as CSV. */
   async exportCsv(body: SearchRequestInput): Promise<void> {

@@ -124,7 +124,11 @@ export function daysBetween(a: string, b: string): number {
 const CURRENCY_DECIMALS: Record<string, number> = { JPY: 0, KRW: 0, VND: 0, CLP: 0, ISK: 0, HUF: 0 };
 
 export function formatPrice(amount: number, currency: string, locale?: string): string {
-  const decimals = CURRENCY_DECIMALS[currency] ?? 0;
+  // CURRENCY_DECIMALS lists the ISO-4217 ZERO-decimal currencies, so it only
+  // makes sense as an exception table against a default of 2. Defaulting to 0
+  // made the table dead code and rounded every fare: 412.99 rendered as "413",
+  // and an alert could announce "reached your target of 300" at 300.49.
+  const decimals = CURRENCY_DECIMALS[currency] ?? 2;
   try {
     return new Intl.NumberFormat(locale, {
       style: "currency",

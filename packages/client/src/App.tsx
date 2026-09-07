@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Alert, CustomPreset, PricePoint, SavedSearch } from "@flighthunter/shared";
 import { formatPrice } from "@flighthunter/shared";
 import { api, type AlertEvent, type Meta } from "./api";
@@ -12,7 +12,9 @@ import {
   formToSearchParams,
   type FormState,
 } from "./searchParams";
+import { useExplore } from "./hooks/useExplore";
 import SearchForm from "./components/SearchForm";
+import ExplorePanel, { defaultExploreForm, type ExploreForm } from "./components/ExplorePanel";
 import ResultsList from "./components/ResultsList";
 import PriceGrid from "./components/PriceGrid";
 import PriceHistoryChart from "./components/PriceHistoryChart";
@@ -22,11 +24,22 @@ import SettingsPanel from "./components/SettingsPanel";
 import ProviderBar from "./components/ProviderBar";
 
 type Tab = "alerts" | "saved" | "history" | "settings";
+/** Search knows where you are going; Explore answers where you could go. */
+type Mode = "search" | "explore";
 
 export default function App() {
   const { settings, update, updateWeights, reset } = useSettings();
 
-  const [form, setForm] = useState<FormState>(() => formFromSearchParams(window.location.search));
+  // Seed from the user's SAVED settings, not the built-in defaults — otherwise
+  // a reloaded or shared link silently runs with a different currency, cabin
+  // and stop limit than the person's own preferences.
+  const [form, setForm] = useState<FormState>(() =>
+    formFromSearchParams(window.location.search, settings),
+  );
+  const [mode, setMode] = useState<Mode>("search");
+  const [exploreForm, setExploreForm] = useState<ExploreForm>(() =>
+    defaultExploreForm(settings.defaultCurrency),
+  );
   const [meta, setMeta] = useState<Meta | null>(null);
   const [customPresets, setCustomPresets] = useState<CustomPreset[]>([]);
   const [tab, setTab] = useState<Tab>("alerts");
@@ -39,6 +52,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
 
   const { state, run, cancel } = useSearch();
+  const explore = useExplore();
   const { theme, setTheme, cycle } = useTheme();
 
   const patch = useCallback((p: Partial<FormState>) => setForm((f) => ({ ...f, ...p })), []);
@@ -72,7 +86,15 @@ export default function App() {
    * setting through, otherwise moving the slider appears to do nothing until
    * the next fresh form.
    */
+  const perRouteSynced = useRef(false);
   useEffect(() => {
+    // Skip the first run: on mount the form already holds whatever the URL
+    // encoded, and overwriting it here discarded the `perRoute` value from a
+    // shared link before the first search ever ran.
+    if (!perRouteSynced.current) {
+      perRouteSynced.current = true;
+      return;
+    }
     setForm((f) => (f.maxPerPair === settings.maxPerPair ? f : { ...f, maxPerPair: settings.maxPerPair }));
   }, [settings.maxPerPair]);
 
@@ -199,7 +221,11 @@ export default function App() {
   }): Promise<void> => {
     setBusy(true);
     try {
-      await api.alertCreate({ ...input, request: formToRequest(form, settings.weights) });
+      // Watch the search that produced the results on screen, not the live
+      // form. Editing a field after searching and then clicking "Create alert"
+      // would otherwise silently watch a route the user never saw priced.
+      const request = state.request ?? formToRequest(form, settings.weights);
+      await api.alertCreate({ ...input, request });
       await refreshAlerts();
       notify("Alert created");
     } catch {
@@ -229,6 +255,42 @@ export default function App() {
     } catch {
       notify("Export failed");
     }
+  };
+
+  const runExplore = (): void => {
+    void explore.run({
+      origins: exploreForm.origins,
+      departureDate: exploreForm.departureDate,
+      adults: form.adults,
+      cabin: form.cabin,
+      currency: form.currency,
+      regions: exploreForm.regions,
+      candidates: exploreForm.candidates,
+      minDistanceKm: exploreForm.minDistanceKm,
+      sort: exploreForm.sort,
+      ...(exploreForm.tripLengthDays !== null ? { tripLengthDays: exploreForm.tripLengthDays } : {}),
+      ...(exploreForm.maxPrice !== null ? { maxPrice: exploreForm.maxPrice } : {}),
+      ...(exploreForm.maxFlightHours !== null
+        ? { maxFlightHours: exploreForm.maxFlightHours }
+        : {}),
+      ...(exploreForm.maxStops !== null ? { maxStops: exploreForm.maxStops } : {}),
+    });
+  };
+
+  /** Picking a destination hands it to the full search, dates and all. */
+  const openDestination = (result: {
+    origin: string;
+    destination: { iata: string };
+    departureDate: string;
+    returnDate?: string;
+  }): void => {
+    setMode("search");
+    submit({
+      origins: [result.origin],
+      destinations: [result.destination.iata],
+      departureDate: result.departureDate,
+      returnDate: result.returnDate ?? "",
+    });
   };
 
   /** Clear every advanced filter without disturbing the route or dates. */
@@ -277,14 +339,34 @@ export default function App() {
           </div>
         </div>
 
+        <div className="mode-switch" role="tablist" aria-label="Search mode">
+          {(["search", "explore"] as Mode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="tab"
+              aria-selected={mode === m}
+              className={mode === m ? "mode-btn active" : "mode-btn"}
+              onClick={() => setMode(m)}
+            >
+              {m === "search" ? "Search" : "Explore"}
+            </button>
+          ))}
+        </div>
+
         <div className="topbar-actions">
-          {cheapest !== null && (
+          {mode === "search" && cheapest !== null && (
             <div className="best">
               <span className="muted">Cheapest</span>
               <strong>{formatPrice(cheapest, form.currency)}</strong>
             </div>
           )}
-          <button type="button" className="btn-ghost" onClick={exportCsv} disabled={offers.length === 0}>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={exportCsv}
+            disabled={mode !== "search" || offers.length === 0}
+          >
             Export CSV
           </button>
           <button type="button" className="btn-ghost" onClick={() => setTab("settings")} title="Settings">
@@ -303,7 +385,8 @@ export default function App() {
         </div>
       )}
 
-      <main className="layout">
+      <main className={mode === "explore" ? "layout layout-explore" : "layout"}>
+        {mode === "search" && (
         <aside className="col-form">
           <SearchForm
             form={form}
@@ -324,8 +407,23 @@ export default function App() {
             routeCount={routeCount}
           />
         </aside>
+        )}
 
         <section className="col-results">
+          {mode === "explore" ? (
+            <ExplorePanel
+              form={exploreForm}
+              onChange={(p) => setExploreForm((f) => ({ ...f, ...p }))}
+              onSubmit={runExplore}
+              onCancel={explore.cancel}
+              onPickDestination={openDestination}
+              loading={explore.state.status === "loading"}
+              data={explore.state.data}
+              error={explore.state.error}
+              currency={form.currency}
+            />
+          ) : (
+          <>
           {state.error && <div className="error-box">{state.error}</div>}
 
           {data && (
@@ -372,6 +470,8 @@ export default function App() {
               setPinned((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
             }
           />
+          </>
+          )}
         </section>
 
         <aside className="col-panel">

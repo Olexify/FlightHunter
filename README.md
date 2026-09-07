@@ -34,8 +34,15 @@ To use live fares, copy `.env.example` to `.env` and add free
 
 ## What it does
 
+**Explore — "where can I go for €400?"**
+- Fix a budget and a departure point; get destinations back instead of fares
+- Filter by region, flight time, minimum distance and stops; sort by price, distance or duration
+- One card per destination (the cheapest way to reach it), and clicking one hands the route
+  straight to the full search with its dates already filled in
+- Prices ~40 candidate destinations in well under a second
+
 **Search**
-- Any route worldwide — **6,071 airports** with ranked autocomplete by city, airport name or IATA code
+- Any route worldwide — **6,072 airports** with ranked autocomplete by city, airport name or IATA code
 - City/metro codes work: `NYC` searches JFK + EWR + LGA, `LON` covers all five London airports
 - Many-to-many search — 5 origins × 3 destinations is one click
 - **22 route presets** across five categories, plus your own saved corridors
@@ -95,7 +102,7 @@ To use live fares, copy `.env.example` to `.env` and add free
 | `npm run dev` | API + UI with hot reload |
 | `npm run build` | Production build of all three packages |
 | `npm start` | Run the built server |
-| `npm test` | Run the test suite (164 tests) |
+| `npm test` | Run the test suite (248 tests) |
 | `npm run typecheck` | Type-check everything, tests included |
 
 ---
@@ -112,7 +119,7 @@ packages/
   server/    Express API
     providers/   Amadeus · Travelpayouts · offline mock (pluggable)
     core/        orchestration, filtering, dedupe, ranking
-    data/        6,071-airport dataset + search index
+    data/        6,072-airport dataset + search index
     db/          SQLite schema, migrations, repositories
     jobs/        background alert poller
   client/    React + Vite UI
@@ -141,5 +148,11 @@ be silently mixed into real results.
   provider for more depth per call rather than making more calls.
 - **The sandbox is not real pricing.** With `AMADEUS_BASE_URL` pointing at `test.api.amadeus.com`
   you get sandbox data. The app says so in the UI rather than pretending otherwise.
+- **Rate limiting keys on the client IP**, so `TRUST_PROXY` defaults to off. Turn it on only behind
+  a proxy you control — with it on, Express reads the IP from a header the caller can set, which
+  would hand anyone a rate-limit bypass.
 - Airport data derives from [OpenFlights](https://openflights.org/data.html), licensed under
-  [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+  [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/). The snapshot predates a few airport
+  changes, so `packages/server/src/data/airports.ts` carries a small corrections list — it adds
+  Berlin Brandenburg (BER, opened 2020) and retires TXL, SXF and THF. A test asserts every preset
+  and metro code resolves against the shipped dataset, because a missing code fails silently.

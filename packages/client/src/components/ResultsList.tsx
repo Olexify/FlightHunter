@@ -37,10 +37,13 @@ export default function ResultsList({ offers, pinned, onTogglePin, loading, sett
       if (maxStops !== null && o.maxStops > maxStops) return false;
       if (onlyWithBag && (!o.baggage || o.baggage.checkedBags < 1)) return false;
       if (needle) {
-        // Match on code OR name, so "TK" and "turkish" both work regardless
-        // of which provider supplied the offer.
-        const hay = o.airlines.map((a) => `${a.code} ${a.name}`).join(" ").toLowerCase();
-        if (!hay.includes(needle)) return false;
+        // Match the CODE exactly and the NAME by substring, rather than
+        // searching one concatenated blob: "CA" (Air China) used to also match
+        // "Cathay Pacific", and "LO" matched anything containing "lo".
+        const match = o.airlines.some(
+          (a) => a.code.toLowerCase() === needle || a.name.toLowerCase().includes(needle),
+        );
+        if (!match) return false;
       }
       return true;
     });
