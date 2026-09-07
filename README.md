@@ -11,7 +11,14 @@ signing up for anything.
 
 ## Quick start
 
-Run these as two separate commands:
+**Windows:** double-click **`FlightHunter.bat`**. It installs and builds on first run, starts the
+app, and opens your browser at **http://localhost:4000**. Later launches skip straight to starting.
+Keep the window open while you use it; closing it stops the server.
+
+To put it on your desktop: right-click `FlightHunter.bat` → *Show more options* → *Send to* →
+*Desktop (create shortcut)*.
+
+Otherwise, run these as two separate commands:
 
 ```
 npm install
@@ -20,12 +27,21 @@ npm run dev
 
 Then open **http://localhost:5173**.
 
-That's it — no `.env`, no keys, no database setup. The API runs on port 4000 and the UI proxies to
-it automatically.
+Either way — no `.env`, no keys, no database setup.
 
 > **Windows PowerShell:** don't join them with `&&` — Windows PowerShell 5.1 (the default in the
 > WebStorm terminal) rejects it with *"The token '&&' is not a valid statement separator"*. Run
 > them on separate lines, or use `npm install; npm run dev`.
+
+### Two ways to run
+
+| | Port | Hot reload | Use it for |
+|---|---|---|---|
+| `FlightHunter.bat` / `npm run build` + `npm start` | **4000** | no | everyday use — one process serves the UI and the API |
+| `FlightHunter.bat dev` / `npm run dev` | **5173** | yes | editing the code |
+
+After changing source, rerun `npm run build` (or delete `packages/client/dist`) so the launcher
+picks the change up.
 
 To use live fares, copy `.env.example` to `.env` and add free
 [Amadeus](https://developers.amadeus.com) credentials.
