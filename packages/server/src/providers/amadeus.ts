@@ -47,8 +47,13 @@ let inFlight: Promise<string> | null = null;
 /**
  * OAuth token, cached until shortly before expiry. Concurrent callers share
  * one request — 30 parallel pair searches must not trigger 30 token fetches.
+ *
+ * The shared fetch is deliberately NOT tied to any caller's AbortSignal: it is
+ * shared state. Binding it to whoever happened to ask first meant that client
+ * navigating away aborted the token fetch for every other in-flight search.
+ * Its own 15s timeout bounds it instead.
  */
-async function getToken(signal?: AbortSignal): Promise<string> {
+async function getToken(): Promise<string> {
   if (token && Date.now() < token.expiresAt) return token.value;
   if (inFlight) return inFlight;
 
@@ -66,7 +71,6 @@ async function getToken(signal?: AbortSignal): Promise<string> {
           },
           timeoutMs: 15_000,
           retries: 1,
-          signal,
         },
       );
       token = {
@@ -218,7 +222,7 @@ export class AmadeusProvider implements FlightProvider {
     req: SearchRequest,
     ctx: ProviderContext,
   ): Promise<FlightOffer[]> {
-    const accessToken = await getToken(ctx.signal);
+    const accessToken = await getToken();
 
     const query: Record<string, string | number | boolean | undefined> = {
       originLocationCode: pair.origin,
@@ -255,7 +259,7 @@ export class AmadeusProvider implements FlightProvider {
       if (err instanceof HttpError && err.status === 401) {
         logger.warn("Amadeus token rejected, refreshing once");
         resetAmadeusToken();
-        const fresh = await getToken(ctx.signal);
+        const fresh = await getToken();
         res = await request<AmadeusResponse>(
           `${config.AMADEUS_BASE_URL}/v2/shopping/flight-offers`,
           {

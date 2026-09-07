@@ -12,7 +12,6 @@ import { alerts, priceHistory } from "../db/repositories.js";
  */
 
 let timer: NodeJS.Timeout | null = null;
-let running = false;
 
 export interface PollSummary {
   checked: number;
@@ -50,7 +49,25 @@ export function evaluateAlert(input: {
   return { triggered: false, message: "" };
 }
 
-export async function pollAlertsOnce(): Promise<PollSummary> {
+let inFlightSweep: Promise<PollSummary> | null = null;
+
+/**
+ * Run a sweep, or join the one already in progress.
+ *
+ * Both the interval scheduler and POST /api/alerts/poll reach this. The old
+ * re-entrancy flag lived inside the scheduler's tick, so it did not guard the
+ * HTTP path at all: two concurrent sweeps each emitted their own event for the
+ * same drop and each re-ran the full provider fan-out.
+ */
+export function pollAlertsOnce(): Promise<PollSummary> {
+  if (inFlightSweep) return inFlightSweep;
+  inFlightSweep = sweep().finally(() => {
+    inFlightSweep = null;
+  });
+  return inFlightSweep;
+}
+
+async function sweep(): Promise<PollSummary> {
   const summary: PollSummary = { checked: 0, triggered: 0, failed: 0 };
   const list = alerts.active();
   if (list.length === 0) return summary;
@@ -71,7 +88,15 @@ export async function pollAlertsOnce(): Promise<PollSummary> {
         onResults: (offers) => priceHistory.recordSearch(offers),
       });
 
-      const cheapest = result.offers[0]?.price.total ?? null;
+      // Take the true minimum. `offers[0]` is only the cheapest when the saved
+      // request happens to sort by price — the default sort is "best", a
+      // composite score, so the first row is regularly NOT the lowest fare and
+      // alerts silently failed to fire on prices that were right there.
+      let cheapest: number | null = null;
+      for (const offer of result.offers) {
+        if (cheapest === null || offer.price.total < cheapest) cheapest = offer.price.total;
+      }
+
       if (cheapest === null) {
         alerts.recordCheck(alert.id, null, { triggered: false, seedBaseline: false });
         continue;
@@ -91,7 +116,13 @@ export async function pollAlertsOnce(): Promise<PollSummary> {
         currency: alert.currency,
       });
 
-      if (verdict.triggered) {
+      // A condition that is true stays true, so re-evaluating alone would emit
+      // an identical event on every sweep forever. Notify on the first trigger,
+      // and afterwards only when the fare falls further than last reported.
+      const alreadyNotified = alert.triggeredAt !== null;
+      const droppedFurther = alert.lastPrice === null || cheapest < alert.lastPrice;
+
+      if (verdict.triggered && (!alreadyNotified || droppedFurther)) {
         alerts.addEvent({
           alertId: alert.id,
           price: cheapest,
@@ -102,6 +133,9 @@ export async function pollAlertsOnce(): Promise<PollSummary> {
         alerts.recordCheck(alert.id, cheapest, { triggered: true, seedBaseline: false });
         summary.triggered++;
         logger.info(`alert "${alert.name}" triggered`, { price: cheapest });
+      } else if (verdict.triggered) {
+        // Still met, but nothing new to say — just record the observation.
+        alerts.recordCheck(alert.id, cheapest, { triggered: true, seedBaseline: false });
       } else {
         alerts.recordCheck(alert.id, cheapest, { triggered: false, seedBaseline: false });
       }
@@ -124,16 +158,12 @@ export function startAlertPoller(): void {
   const intervalMs = config.ALERT_POLL_MINUTES * 60_000;
 
   const tick = async (): Promise<void> => {
-    // Skip rather than overlap if a previous sweep is still going.
-    if (running) return;
-    running = true;
+    // Overlap is prevented inside pollAlertsOnce, which every entry point shares.
     try {
       const summary = await pollAlertsOnce();
       if (summary.checked > 0) logger.info("alert sweep complete", summary);
     } catch (err) {
       logger.error("alert sweep failed", { message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      running = false;
     }
   };
 

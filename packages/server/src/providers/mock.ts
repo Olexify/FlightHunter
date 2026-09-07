@@ -252,22 +252,34 @@ function chooseHub(
     "IST", "DXB", "DOH", "FRA", "AMS", "HEL", "ICN", "PEK", "SIN", "CDG", "LHR", "ZRH", "VIE", "MUC",
   ].filter(usable);
 
-  let best: string | null = null;
-  let bestDetour = Infinity;
+  if (direct === null) return null;
+
+  // Every candidate must be a detour a real airline would actually fly. The
+  // previous version picked a random alternative 30% of the time with NO
+  // distance check at all, which produced Warsaw->Vienna (557 km) routed via
+  // Beijing: 14,396 km and 23 hours. A quarter of all short-haul offers were
+  // nonsense like that.
+  const MAX_DETOUR_RATIO = 1.6;
+
+  const viable: Array<{ hub: string; detour: number }> = [];
   for (const h of alternatives) {
     const a = distanceBetween(origin, h);
     const b = distanceBetween(h, destination);
     if (a === null || b === null) continue;
     const detour = a + b;
-    if (detour < bestDetour) {
-      bestDetour = detour;
-      best = h;
-    }
+    if (detour <= direct * MAX_DETOUR_RATIO) viable.push({ hub: h, detour });
   }
 
-  // A little randomness so every mock 1-stop is not the same airport.
-  if (best && alternatives.length > 0 && rand() < 0.3) return pick(rand, alternatives);
-  return best;
+  if (viable.length === 0) return null; // nothing sensible — fly it nonstop
+
+  viable.sort((x, y) => x.detour - y.detour);
+
+  // Some variety so every mock connection is not the same airport, but only
+  // ever among hubs that are genuinely on the way.
+  if (viable.length > 1 && rand() < 0.3) {
+    return pick(rand, viable.slice(0, 3)).hub;
+  }
+  return viable[0]?.hub ?? null;
 }
 
 function buildSegment(
@@ -461,7 +473,11 @@ export class MockProvider implements FlightProvider {
 
       const legs = itineraries.length;
       const base = distance * ratePerKm(distance) * legs;
-      const stopDiscount = stops === 0 ? 1.18 : stops === 1 ? 1.0 : 0.87;
+      // Price the trip that was actually built. `stops` is only the intent —
+      // when no sensible connecting hub exists the itinerary comes back
+      // nonstop, and charging it the 2-stop discount would misprice it.
+      const actualStops = Math.max(...itineraries.map((it) => it.stops));
+      const stopDiscount = actualStops === 0 ? 1.18 : actualStops === 1 ? 1.0 : 0.87;
       const variance = 0.82 + rand() * 0.45;
 
       const baseFare =

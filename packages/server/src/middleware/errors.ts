@@ -17,6 +17,14 @@ export function asyncHandler(
   };
 }
 
+/** Express body-parser errors expose `status`/`statusCode`; read either. */
+function statusOf(err: unknown): number | null {
+  if (typeof err !== "object" || err === null) return null;
+  const candidate = err as { status?: unknown; statusCode?: unknown };
+  const raw = candidate.status ?? candidate.statusCode;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
 export function notFoundHandler(_req: Request, res: Response): void {
   res.status(404).json({ error: { code: "NOT_FOUND", message: "No such endpoint" } });
 }
@@ -51,6 +59,21 @@ export function errorHandler(
     if (err.status === 499) return;
     res.status(err.status).json({
       error: { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) },
+    });
+    return;
+  }
+
+  // Body-parser and similar errors carry their own HTTP status (400 for
+  // malformed JSON, 413 for an oversized body). Ignoring it turned every
+  // client mistake into a 500 that reads as a server fault — and in production
+  // the message is replaced, so the user could not even see what was wrong.
+  const status = statusOf(err);
+  if (status !== null && status >= 400 && status < 500) {
+    res.status(status).json({
+      error: {
+        code: status === 413 ? "PAYLOAD_TOO_LARGE" : "BAD_REQUEST",
+        message: err instanceof Error ? err.message : "Invalid request",
+      },
     });
     return;
   }

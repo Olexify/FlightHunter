@@ -10,8 +10,10 @@ export function createApp(): Express {
   const app = express();
 
   app.disable("x-powered-by");
-  // Needed for correct client IPs (and thus rate limiting) behind a proxy.
-  app.set("trust proxy", 1);
+  // Opt-in only. With this on, req.ip comes from X-Forwarded-For, which the
+  // client controls — so trusting it while directly exposed hands anyone a
+  // rate-limit bypass. Enable TRUST_PROXY only behind your own proxy.
+  app.set("trust proxy", config.TRUST_PROXY ? 1 : false);
 
   app.use(
     cors({

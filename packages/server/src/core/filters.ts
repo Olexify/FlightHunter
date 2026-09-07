@@ -41,6 +41,30 @@ function connectionAirports(offer: FlightOffer): string[] {
   return out;
 }
 
+/**
+ * True when the offer carries no routing detail at all.
+ *
+ * Travelpayouts returns fares without segments, so any filter that inspects
+ * connections is blind for those offers. Treating "no data" as "no violation"
+ * silently passes them; the orchestrator reports how many were unverifiable
+ * rather than pretending the constraint was enforced.
+ */
+function hasRoutingDetail(offer: FlightOffer): boolean {
+  return offer.itineraries.some((it) => it.segments.length > 0);
+}
+
+/**
+ * Flights per direction. Falls back to stops+1 when segment detail is absent —
+ * a 3-stop itinerary is 4 flights whether or not the provider listed them.
+ */
+function maxFlightsPerLeg(offer: FlightOffer): number {
+  let worst = 0;
+  for (const it of offer.itineraries) {
+    worst = Math.max(worst, it.segments.length > 0 ? it.segments.length : it.stops + 1);
+  }
+  return worst;
+}
+
 /** Departures in the small hours, which many travellers want to avoid. */
 function isRedEye(departureAt: string): boolean {
   const minutes = minutesIntoDay(departureAt);
@@ -69,9 +93,11 @@ function withinWindow(
 export function applyFilters(
   offers: FlightOffer[],
   req: SearchRequest,
-): { kept: FlightOffer[]; rejected: FilterReason[] } {
+): { kept: FlightOffer[]; rejected: FilterReason[]; unverifiableRouting: number } {
   const kept: FlightOffer[] = [];
   const rejected: FilterReason[] = [];
+  /** Offers kept despite a routing filter we could not evaluate. */
+  let unverifiableRouting = 0;
 
   const include = new Set(req.includeAirlines);
   const exclude = new Set(req.excludeAirlines);
@@ -110,7 +136,11 @@ export function applyFilters(
       continue;
     }
 
-    if (req.fareBrands.length > 0 && (!offer.fareBrand || !req.fareBrands.includes(offer.fareBrand))) {
+    // Only judge offers that actually declare a fare family. Amadeus and
+    // Travelpayouts never set one, so rejecting on absence would empty the
+    // result set entirely in any deployment with real API keys — the same
+    // trap the checked-bag filter below already guards against.
+    if (offer.fareBrand && req.fareBrands.length > 0 && !req.fareBrands.includes(offer.fareBrand)) {
       rejected.push({ offerId: offer.id, reason: "fare family not selected" });
       continue;
     }
@@ -121,21 +151,28 @@ export function applyFilters(
       continue;
     }
 
-    const connections = connectionAirports(offer);
-    if (req.avoidAirports.length > 0 && connections.some((c) => req.avoidAirports.includes(c))) {
-      rejected.push({ offerId: offer.id, reason: "routes through an avoided airport" });
-      continue;
-    }
-    if (req.viaAirports.length > 0 && !connections.some((c) => req.viaAirports.includes(c))) {
-      rejected.push({ offerId: offer.id, reason: "does not route via a required airport" });
-      continue;
-    }
-    if (
-      req.maxSegments !== undefined &&
-      offer.itineraries.some((it) => it.segments.length > (req.maxSegments as number))
-    ) {
+    // Segment count is knowable even without routing detail, via stops+1.
+    if (req.maxSegments !== undefined && maxFlightsPerLeg(offer) > req.maxSegments) {
       rejected.push({ offerId: offer.id, reason: "too many flights" });
       continue;
+    }
+
+    const wantsRouting = req.avoidAirports.length > 0 || req.viaAirports.length > 0;
+    if (wantsRouting && !hasRoutingDetail(offer)) {
+      // The provider gave us a fare with no routing, so the constraint cannot
+      // be checked either way. Keep the offer but count it, so the response
+      // can say the filter was not enforced instead of implying it was.
+      unverifiableRouting++;
+    } else if (wantsRouting) {
+      const connections = connectionAirports(offer);
+      if (req.avoidAirports.length > 0 && connections.some((c) => req.avoidAirports.includes(c))) {
+        rejected.push({ offerId: offer.id, reason: "routes through an avoided airport" });
+        continue;
+      }
+      if (req.viaAirports.length > 0 && !connections.some((c) => req.viaAirports.includes(c))) {
+        rejected.push({ offerId: offer.id, reason: "does not route via a required airport" });
+        continue;
+      }
     }
     if (req.avoidRedEye && offer.itineraries.some((it) => isRedEye(it.departureAt))) {
       rejected.push({ offerId: offer.id, reason: "red-eye departure" });
@@ -169,5 +206,5 @@ export function applyFilters(
     kept.push(offer);
   }
 
-  return { kept, rejected };
+  return { kept, rejected, unverifiableRouting };
 }

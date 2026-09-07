@@ -13,6 +13,7 @@ import { expandMetroCodes, nearbyAirports, partitionKnown } from "../data/airpor
 import { describeAmadeusError } from "../providers/amadeus.js";
 import { activeProviders, isMockOnly } from "../providers/registry.js";
 import type { FlightProvider, RoutePair } from "../providers/types.js";
+import { AppError } from "../util/errors.js";
 import { TtlCache } from "../util/cache.js";
 import { createLimiter } from "../util/semaphore.js";
 import { dedupeOffers } from "./dedupe.js";
@@ -180,7 +181,7 @@ export async function runSearch(
     warnings.push(`Unknown airport code "${code}" — skipped.`);
   }
   if (originCheck.known.length === 0 || destCheck.known.length === 0) {
-    throw new Error("No recognised airport codes in this search");
+    throw AppError.badRequest("No recognised airport codes in this search");
   }
 
   const expanded = expandOrigins({ ...req, origins: originCheck.known });
@@ -220,12 +221,6 @@ export async function runSearch(
   };
 
   const collected = await runPass(basePairs);
-
-  if (budget <= 0) {
-    warnings.push(
-      `Search capped at ${MAX_PROVIDER_CALLS} provider calls — narrow the airports or date range for full coverage.`,
-    );
-  }
 
   /* ----------------------- flexible-date exploration ----------------------- */
 
@@ -273,10 +268,23 @@ export async function runSearch(
 
   /* ------------------------------- shaping -------------------------------- */
 
+  // Checked AFTER the flexible-date pass, which spends from the same budget.
+  // Warning before it meant a truncated price grid was returned silently.
+  if (budget <= 0) {
+    warnings.push(
+      `Search capped at ${MAX_PROVIDER_CALLS} provider calls — narrow the airports or date range for full coverage.`,
+    );
+  }
+
   const deduped = dedupeOffers(collected);
   const totalBeforeFilters = deduped.length;
 
-  const { kept, rejected } = applyFilters(deduped, req);
+  const { kept, rejected, unverifiableRouting } = applyFilters(deduped, req);
+  if (unverifiableRouting > 0) {
+    warnings.push(
+      `${unverifiableRouting} fare(s) came without routing detail, so the connection filters could not be applied to them.`,
+    );
+  }
   if (kept.length === 0 && rejected.length > 0) {
     warnings.push(`All ${rejected.length} result(s) were removed by your filters — try relaxing them.`);
   }

@@ -7,6 +7,7 @@ import {
   CreateCustomPreset,
   CreateSavedSearch,
   DEFAULT_RANKING_WEIGHTS,
+  ExploreRequest,
   FARE_BRAND_LABELS,
   PRESET_CATEGORY_LABELS,
   ROUTE_PRESETS,
@@ -15,6 +16,7 @@ import {
 } from "@flighthunter/shared";
 import { config, configWarnings } from "../config.js";
 import { cacheStats, clearSearchCache, runSearch } from "../core/orchestrator.js";
+import { runExplore } from "../core/explore.js";
 import { airportCount, datasetLicense, getAirport, nearbyAirports, searchAirports } from "../data/airports.js";
 import { alerts, customPresets, priceHistory, savedSearches } from "../db/repositories.js";
 import { pollAlertsOnce } from "../jobs/alertPoller.js";
@@ -170,6 +172,19 @@ export function createRouter(): Router {
     }),
   );
 
+  /**
+   * "Where can I go for X?" — search by budget rather than by destination.
+   * Rate-limited like /search: it prices dozens of candidate destinations.
+   */
+  router.post(
+    "/explore",
+    searchLimiter,
+    asyncHandler(async (req, res) => {
+      const parsed = ExploreRequest.parse(req.body);
+      res.json(await runExplore(parsed, { signal: signalFor(res) }));
+    }),
+  );
+
   router.post("/search/cache/clear", (_req, res) => {
     clearSearchCache();
     res.json({ ok: true });
@@ -219,9 +234,15 @@ export function createRouter(): Router {
     res.json({ acknowledged: alerts.acknowledgeEvents() });
   });
 
-  /** Manual sweep, so the feature is usable without waiting for the interval. */
+  /**
+   * Manual sweep, so the feature is usable without waiting for the interval.
+   * Rate-limited like /search: a sweep re-runs the full provider fan-out for
+   * every active alert, so it is at least as expensive as a search.
+   * Concurrent callers join one sweep inside `pollAlertsOnce`.
+   */
   router.post(
     "/alerts/poll",
+    searchLimiter,
     asyncHandler(async (_req, res) => {
       res.json(await pollAlertsOnce());
     }),

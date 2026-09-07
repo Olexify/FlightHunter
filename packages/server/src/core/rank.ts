@@ -37,18 +37,29 @@ export function scoreOffers(
 
   let bestPrice = Infinity;
   let bestDuration = Infinity;
+  let worstDuration = 0;
 
   for (const o of offers) {
     if (o.price.total > 0) bestPrice = Math.min(bestPrice, o.price.total);
-    if (o.totalDurationMinutes > 0) bestDuration = Math.min(bestDuration, o.totalDurationMinutes);
+    if (o.totalDurationMinutes > 0) {
+      bestDuration = Math.min(bestDuration, o.totalDurationMinutes);
+      worstDuration = Math.max(worstDuration, o.totalDurationMinutes);
+    }
   }
   if (!Number.isFinite(bestPrice)) bestPrice = 1;
   if (!Number.isFinite(bestDuration)) bestDuration = 1;
+  if (worstDuration === 0) worstDuration = bestDuration;
 
   for (const o of offers) {
+    // A duration of 0 means the provider did not report one. Scoring it as
+    // written would make it a perfect zero-penalty match — the fastest trip in
+    // the set — so an offer that proved nothing would outrank a real nonstop.
+    // Treat unknown as no better than the slowest thing we did measure.
+    const duration = o.totalDurationMinutes > 0 ? o.totalDurationMinutes : worstDuration;
+
     const penalty =
       weights.price * excess(o.price.total, bestPrice) +
-      weights.duration * excess(o.totalDurationMinutes, bestDuration) +
+      weights.duration * excess(duration, bestDuration) +
       weights.stops * o.maxStops;
 
     // A penalty of 1.0 or more bottoms out at zero rather than going negative.
@@ -82,8 +93,13 @@ export function sortOffers(offers: FlightOffer[], key: SortKey): FlightOffer[] {
         return (b.score ?? 0) - (a.score ?? 0) || byPriceThenId(a, b);
       case "price":
         return byPriceThenId(a, b);
-      case "duration":
-        return a.totalDurationMinutes - b.totalDurationMinutes || byPriceThenId(a, b);
+      case "duration": {
+        // Unknown duration sorts last rather than first.
+        const da = a.totalDurationMinutes > 0 ? a.totalDurationMinutes : Infinity;
+        const db = b.totalDurationMinutes > 0 ? b.totalDurationMinutes : Infinity;
+        if (da !== db) return da - db;
+        return byPriceThenId(a, b);
+      }
       case "stops":
         return a.maxStops - b.maxStops || byPriceThenId(a, b);
       case "departure":
