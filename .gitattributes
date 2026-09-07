@@ -1,6 +1,11 @@
 # Normalise line endings so the repo stays consistent across Windows and CI.
 * text=auto eol=lf
 
+# Windows batch files must keep CRLF — cmd.exe can mis-parse labels and goto
+# targets in an LF-only .bat, so the blanket eol=lf above would break them.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # Binary / generated assets should never be line-ending converted.
 *.png binary
 *.jpg binary
