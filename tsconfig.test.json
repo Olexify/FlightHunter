@@ -4,9 +4,15 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
     "jsx": "react-jsx",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": true,
     "composite": false,
     "incremental": false,
@@ -14,13 +20,16 @@
     "declarationMap": false,
     "sourceMap": false,
     "paths": {
-      "@flighthunter/shared": ["./packages/shared/src/index.ts"]
+      "@flighthunter/shared": [
+        "./packages/shared/src/index.ts"
+      ]
     },
     "baseUrl": "."
   },
   "include": [
     "packages/*/src/**/*.test.ts",
     "packages/server/src/testFixtures.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "packages/server/src/doctor.ts"
   ]
 }

@@ -49,8 +49,38 @@ Either way — no `.env`, no keys, no database setup.
 After changing source, rerun `npm run build` (or delete `packages/client/dist`) so the launcher
 picks the change up.
 
-To use live fares, copy `.env.example` to `.env` and add free
-[Amadeus](https://developers.amadeus.com) credentials.
+---
+
+## Getting real prices
+
+**Out of the box every fare is simulated.** The `mock` badge on each row and the banner across the
+top say so — nothing here is bookable until you add a provider key.
+
+Two free sources drop straight in, neither needs a card:
+
+| Provider | What you get | Sign up |
+|---|---|---|
+| **Amadeus Self-Service** | Real flight offers with full routing. The default `test` host returns sandbox pricing on a subset of routes; switch `AMADEUS_BASE_URL` to `https://api.amadeus.com` for production fares. | [developers.amadeus.com](https://developers.amadeus.com) |
+| **Travelpayouts** | Cached real-world fares plus booking links. No routing detail — the app labels those results accordingly. | [travelpayouts.com](https://travelpayouts.com) |
+
+Put the keys in `.env` (run `npm run doctor` once and it creates the file for you), then:
+
+```
+npm run doctor
+```
+
+That drives the **real provider code** against the live API — it authenticates, runs an actual
+search, and prints the fares it got back, so a pass proves the whole path works rather than just
+that the credentials are valid. It names the specific problem when something is wrong: a 401 means
+the key is mistyped, a 429 means you hit the rate limit.
+
+Once a real provider is configured the mock is withheld entirely, so simulated fares can never be
+mixed into live results.
+
+> **Scraping airline or comparison sites is not supported and won't be added.** Google Flights,
+> Skyscanner and Kayak sit behind bot protection, serve deliberately obfuscated payloads that change
+> without notice, and prohibit it in their terms. It breaks constantly and gets your IP banned. The
+> provider API route is both legal and far less work.
 
 ---
 
@@ -125,6 +155,7 @@ To use live fares, copy `.env.example` to `.env` and add free
 | `npm run build` | Production build of all three packages |
 | `npm start` | Run the built server |
 | `npm test` | Run the test suite (248 tests) |
+| `npm run doctor` | Check whether live provider keys actually work |
 | `npm run typecheck` | Type-check everything, tests included |
 
 ---

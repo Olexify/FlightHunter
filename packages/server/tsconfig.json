@@ -21,6 +21,7 @@
   "exclude": [
     "**/*.test.ts",
     "**/*.test.tsx",
-    "src/testFixtures.ts"
+    "src/testFixtures.ts",
+    "src/doctor.ts"
   ]
 }

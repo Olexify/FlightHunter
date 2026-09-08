@@ -22,7 +22,8 @@
     "test:watch": "vitest",
     "clean": "node -e \"['packages/shared/dist','packages/server/dist','packages/client/dist'].forEach(p=>require('fs').rmSync(p,{recursive:true,force:true}))\"",
     "build:shared": "npm --workspace @flighthunter/shared run build",
-    "dev:shared": "npm --workspace @flighthunter/shared run dev"
+    "dev:shared": "npm --workspace @flighthunter/shared run dev",
+    "doctor": "npm --workspace @flighthunter/server run doctor"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
