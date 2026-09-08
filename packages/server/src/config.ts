@@ -60,8 +60,25 @@ export type AppConfig = Readonly<
   }
 >;
 
-function build(): AppConfig {
-  const parsed = EnvSchema.safeParse(process.env);
+/**
+ * Drop blank values so a variable that is present but empty counts as unset.
+ *
+ * `.env.example` ships keys as `AMADEUS_CLIENT_ID=`, and dotenv loads that as
+ * an empty string — which Zod sees as "present" and rejects against .min(1).
+ * Copying the example file, exactly what the setup instructions say to do,
+ * would otherwise stop the server booting at all.
+ */
+function withoutBlanks(raw: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string" && value.trim() !== "") out[key] = value;
+  }
+  return out;
+}
+
+/** Exported for tests; `config` below is the singleton the app uses. */
+export function parseEnv(raw: NodeJS.ProcessEnv): AppConfig {
+  const parsed = EnvSchema.safeParse(withoutBlanks(raw));
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`);
     throw new Error(`Invalid environment configuration:\n${lines.join("\n")}`);
@@ -87,7 +104,7 @@ function build(): AppConfig {
   });
 }
 
-export const config: AppConfig = build();
+export const config: AppConfig = parseEnv(process.env);
 
 /** Human-readable notes shown once at boot and via `/api/health`. */
 export function configWarnings(c: AppConfig = config): string[] {
