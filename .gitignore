@@ -16,6 +16,10 @@ packages/server/data/
 *.db-shm
 *.db-wal
 
+# Windows shortcuts store an absolute path, so they are machine-specific.
+# Recreate them with scripts\create-shortcuts.ps1 instead of committing them.
+*.lnk
+
 # Editors
 .idea/
 .vscode/
