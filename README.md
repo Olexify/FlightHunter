@@ -15,8 +15,14 @@ signing up for anything.
 app, and opens your browser at **http://localhost:4000**. Later launches skip straight to starting.
 Keep the window open while you use it; closing it stops the server.
 
-To put it on your desktop: right-click `FlightHunter.bat` → *Show more options* → *Send to* →
-*Desktop (create shortcut)*.
+For a proper shortcut with an icon, in the project folder and on your desktop:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\create-shortcuts.ps1
+```
+
+Shortcuts store an absolute path, so they are machine-specific and not committed — rerun that
+script after cloning, or if you move the project folder.
 
 Otherwise, run these as two separate commands:
 
