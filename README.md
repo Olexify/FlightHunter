@@ -1,8 +1,25 @@
-# ✈️ Flight Hunter
+<p align="center">
+  <img src="assets/logo-256.png" alt="" width="104" height="104">
+</p>
 
-Search **many departure airports against many destinations at once** and find the cheapest way to
-get there. Built for the case ordinary flight search handles badly: *"I'll fly from any of these
-five cities to any of these three, whichever is cheapest — and I'm flexible on dates."*
+<h1 align="center">Flight Hunter</h1>
+
+<p align="center">
+  Search <b>many departure airports against many destinations at once</b><br>
+  and find the cheapest way to get there.
+</p>
+
+<p align="center">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-256%20passing-067647">
+  <img alt="Airports" src="https://img.shields.io/badge/airports-6%2C072-2563eb">
+  <img alt="Runtime" src="https://img.shields.io/badge/node-%E2%89%A520-2563eb">
+  <img alt="No API key required" src="https://img.shields.io/badge/API%20key-optional-667085">
+</p>
+
+---
+
+Built for the case ordinary flight search handles badly: *"I'll fly from any of these five cities to
+any of these three, whichever is cheapest — and I'm flexible on dates."*
 
 Runs with **zero API keys** on realistic offline sample data, so you can try the whole thing before
 signing up for anything.
@@ -204,6 +221,11 @@ be silently mixed into real results.
 - **Rate limiting keys on the client IP**, so `TRUST_PROXY` defaults to off. Turn it on only behind
   a proxy you control — with it on, Express reads the IP from a header the caller can set, which
   would hand anyone a rate-limit bypass.
+- **Brand assets are generated, not hand-drawn.** `node scripts/make-icon.mjs` derives the SVG, the
+  `.ico`, the favicons and the PWA icons from one definition of the mark in that script, so they
+  cannot drift apart. Edit the geometry there and rerun. `assets/social-preview.png` is the
+  1280×640 card for GitHub — upload it under *Settings → General → Social preview*, which is the one
+  place that cannot be set from the repository itself.
 - Airport data derives from [OpenFlights](https://openflights.org/data.html), licensed under
   [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/). The snapshot predates a few airport
   changes, so `packages/server/src/data/airports.ts` carries a small corrections list — it adds

@@ -121,11 +121,8 @@ input.tiny { width: 84px; }
   gap: 16px; flex-wrap: wrap; margin-bottom: 14px;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
-.brand-mark {
-  display: grid; place-items: center;
-  width: 40px; height: 40px; border-radius: 11px;
-  background: var(--accent); color: #fff; font-size: 20px;
-}
+/* The asset carries its own tile and colour, so no background here. */
+.brand-mark { display: block; width: 40px; height: 40px; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 .best {
   display: flex; flex-direction: column; align-items: flex-end;
