@@ -4,13 +4,40 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Generates assets/flighthunter.ico — the icon for the Windows shortcut.
+ * Generates every Flight Hunter brand asset from one definition of the mark.
  *
- * Drawn here rather than shipped as a binary blob so it stays editable and
- * reviewable, and built with only node:zlib so it adds no dependency. Shapes
- * are rendered at 4x and downsampled, which is enough anti-aliasing for an
- * icon without pulling in a rasteriser.
+ * The geometry below is the single source of truth: the SVG, the .ico, the
+ * favicons and the PWA icons are all derived from it, so they can never drift
+ * apart. Built with only node:zlib for PNG encoding, so it adds no dependency.
+ *
+ *   node scripts/make-icon.mjs
  */
+
+/* -------------------------------- geometry -------------------------------- */
+
+/** Brand blue — the same --accent the UI uses. */
+const BG = [37, 99, 235];
+const FG = [255, 255, 255];
+
+/** Corner radius as a fraction of the tile. */
+const RADIUS = 0.22;
+/** The mark is inset so it never touches the tile edge. */
+const INSET = 0.12;
+const SCALE = 1 - INSET * 2;
+
+/** A paper plane: nose top-right, tail left, body notch, lower fin. */
+const PLANE = [
+  [0.93, 0.13],
+  [0.07, 0.47],
+  [0.38, 0.585],
+  [0.45, 0.92],
+];
+/** The fold, cut out so the shape reads as folded paper rather than a blob. */
+const FOLD = [
+  [0.93, 0.13],
+  [0.38, 0.585],
+  [0.45, 0.92],
+];
 
 /* ------------------------------- PNG writer ------------------------------- */
 
@@ -40,21 +67,19 @@ function chunk(type, data) {
 }
 
 /** RGBA pixel buffer -> PNG. */
-function encodePng(rgba, size) {
+function encodePng(rgba, width, height = width) {
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 6; // colour type: RGBA
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
 
-  // Each scanline is prefixed with filter type 0 (none).
-  const raw = Buffer.alloc((size * 4 + 1) * size);
-  for (let y = 0; y < size; y++) {
-    raw[y * (size * 4 + 1)] = 0;
-    rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
+  // Each scanline carries a leading filter byte; 0 means "none".
+  const stride = width * 4;
+  const raw = Buffer.alloc((stride + 1) * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = 0;
+    rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
   }
 
   return Buffer.concat([
@@ -67,7 +92,6 @@ function encodePng(rgba, size) {
 
 /* --------------------------------- drawing -------------------------------- */
 
-/** Signed distance helper: is (x,y) inside a rounded square? */
 function insideRoundedSquare(x, y, size, radius) {
   const min = radius;
   const max = size - radius;
@@ -78,7 +102,7 @@ function insideRoundedSquare(x, y, size, radius) {
   return (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius;
 }
 
-/** Even-odd point-in-polygon. Points are normalised 0..1. */
+/** Even-odd point-in-polygon over normalised 0..1 coordinates. */
 function insidePolygon(px, py, poly) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -91,25 +115,14 @@ function insidePolygon(px, py, poly) {
   return inside;
 }
 
-// A paper plane: nose top-right, tail left, body notch, lower fin.
-const PLANE = [
-  [0.93, 0.13],
-  [0.07, 0.47],
-  [0.38, 0.585],
-  [0.45, 0.92],
-];
-/** The fold line, cut out so the shape reads as folded paper. */
-const FOLD = [
-  [0.93, 0.13],
-  [0.38, 0.585],
-  [0.45, 0.92],
-];
-
-const BG = [37, 99, 235]; // --accent
-const FG = [255, 255, 255];
-
-function render(size) {
-  const SS = 4; // supersample factor
+/**
+ * Renders the tile at `size`, supersampled 4x. That is enough anti-aliasing
+ * for an icon without pulling in a rasteriser.
+ *
+ * `tile` false draws only the mark on transparency, for the wordmark lockup.
+ */
+function render(size, { tile = true } = {}) {
+  const SS = 4;
   const big = size * SS;
   const out = Buffer.alloc(size * size * 4);
 
@@ -123,30 +136,34 @@ function render(size) {
           const px = x * SS + sx + 0.5;
           const py = y * SS + sy + 0.5;
 
-          if (!insideRoundedSquare(px, py, big, big * 0.22)) continue;
+          if (tile && !insideRoundedSquare(px, py, big, big * RADIUS)) continue;
           bgHits++;
 
-          const nx = px / big;
-          const ny = py / big;
-          // Inset the plane so it does not touch the tile edges.
-          const ix = (nx - 0.12) / 0.76;
-          const iy = (ny - 0.12) / 0.76;
-
+          const ix = (px / big - INSET) / SCALE;
+          const iy = (py / big - INSET) / SCALE;
           if (insidePolygon(ix, iy, PLANE) && !insidePolygon(ix, iy, FOLD)) fgHits++;
         }
       }
 
       const total = SS * SS;
-      const alpha = bgHits / total;
-      const fg = fgHits / total;
       const i = (y * size + x) * 4;
 
+      if (!tile) {
+        // Mark only: the plane in brand blue on transparency.
+        const a = fgHits / total;
+        out[i] = BG[0];
+        out[i + 1] = BG[1];
+        out[i + 2] = BG[2];
+        out[i + 3] = Math.round(a * 255);
+        continue;
+      }
+
+      const alpha = bgHits / total;
       if (alpha === 0) {
         out[i + 3] = 0;
         continue;
       }
-      // Blend the plane over the tile, then apply the tile's own coverage.
-      const mix = fg / alpha;
+      const mix = fgHits / total / alpha;
       out[i] = Math.round(BG[0] * (1 - mix) + FG[0] * mix);
       out[i + 1] = Math.round(BG[1] * (1 - mix) + FG[1] * mix);
       out[i + 2] = Math.round(BG[2] * (1 - mix) + FG[2] * mix);
@@ -156,36 +173,80 @@ function render(size) {
   return out;
 }
 
+/* ---------------------------------- SVG ----------------------------------- */
+
+const S = 256;
+const pt = ([x, y]) =>
+  `${(((x * SCALE + INSET) * S)).toFixed(1)},${(((y * SCALE + INSET) * S)).toFixed(1)}`;
+const pathOf = (poly) => `M${poly.map(pt).join("L")}Z`;
+
+const rgb = ([r, g, b]) => `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+
+/** Vector master. Everything above rasterises the same shapes. */
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}" role="img" aria-label="Flight Hunter">
+  <title>Flight Hunter</title>
+  <rect width="${S}" height="${S}" rx="${(S * RADIUS).toFixed(0)}" fill="${rgb(BG)}"/>
+  <path d="${pathOf(PLANE)} ${pathOf(FOLD)}" fill="${rgb(FG)}" fill-rule="evenodd"/>
+</svg>
+`;
+
 /* ---------------------------------- ICO ----------------------------------- */
 
-const SIZES = [16, 24, 32, 48, 64, 128, 256];
+function buildIco(sizes) {
+  const images = sizes.map((size) => ({ size, png: encodePng(render(size), size) }));
 
-const images = SIZES.map((size) => ({ size, png: encodePng(render(size), size) }));
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2); // 1 = icon
+  header.writeUInt16LE(images.length, 4);
 
-const header = Buffer.alloc(6);
-header.writeUInt16LE(0, 0); // reserved
-header.writeUInt16LE(1, 2); // 1 = icon
-header.writeUInt16LE(images.length, 4);
-
-let offset = 6 + images.length * 16;
-const entries = [];
-for (const { size, png } of images) {
-  const e = Buffer.alloc(16);
-  e[0] = size === 256 ? 0 : size; // 0 means 256
-  e[1] = size === 256 ? 0 : size;
-  e[2] = 0; // palette
-  e[3] = 0; // reserved
-  e.writeUInt16LE(1, 4); // colour planes
-  e.writeUInt16LE(32, 6); // bits per pixel
-  e.writeUInt32LE(png.length, 8);
-  e.writeUInt32LE(offset, 12);
-  entries.push(e);
-  offset += png.length;
+  let offset = 6 + images.length * 16;
+  const entries = [];
+  for (const { size, png } of images) {
+    const e = Buffer.alloc(16);
+    e[0] = size === 256 ? 0 : size; // 0 encodes 256
+    e[1] = size === 256 ? 0 : size;
+    e.writeUInt16LE(1, 4); // colour planes
+    e.writeUInt16LE(32, 6); // bits per pixel
+    e.writeUInt32LE(png.length, 8);
+    e.writeUInt32LE(offset, 12);
+    entries.push(e);
+    offset += png.length;
+  }
+  return Buffer.concat([header, ...entries, ...images.map((i) => i.png)]);
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
-const target = join(here, "..", "assets", "flighthunter.ico");
-mkdirSync(dirname(target), { recursive: true });
-writeFileSync(target, Buffer.concat([header, ...entries, ...images.map((i) => i.png)]));
+/* --------------------------------- output --------------------------------- */
 
-console.log(`wrote ${target} (${SIZES.join(", ")} px, ${offset} bytes)`);
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, "..");
+const assets = join(root, "assets");
+// Vite serves everything in public/ from the site root.
+const publicDir = join(root, "packages", "client", "public");
+
+mkdirSync(assets, { recursive: true });
+mkdirSync(publicDir, { recursive: true });
+
+const written = [];
+const write = (path, data) => {
+  writeFileSync(path, data);
+  written.push([path.replace(root + "\\", "").replace(root + "/", ""), data.length]);
+};
+
+const ico = buildIco([16, 24, 32, 48, 64, 128, 256]);
+
+write(join(assets, "logo.svg"), Buffer.from(svg, "utf8"));
+write(join(assets, "flighthunter.ico"), ico);
+// Shown in the README, where a transparent tile would vanish on dark themes.
+write(join(assets, "logo-256.png"), encodePng(render(256), 256));
+
+write(join(publicDir, "favicon.ico"), ico);
+write(join(publicDir, "favicon.svg"), Buffer.from(svg, "utf8"));
+write(join(publicDir, "apple-touch-icon.png"), encodePng(render(180), 180));
+write(join(publicDir, "icon-192.png"), encodePng(render(192), 192));
+write(join(publicDir, "icon-512.png"), encodePng(render(512), 512));
+
+for (const [path, bytes] of written) {
+  console.log(`  ${path.padEnd(44)} ${String(bytes).padStart(7)} bytes`);
+}
+console.log(`\n  ${written.length} assets written from one definition of the mark.`);

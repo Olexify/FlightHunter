@@ -329,7 +329,8 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">✈</span>
+          {/* Decorative: the adjacent <h1> already names the app. */}
+          <img className="brand-mark" src="/favicon.svg" alt="" width={40} height={40} />
           <div>
             <h1>Flight Hunter</h1>
             <p className="muted">
